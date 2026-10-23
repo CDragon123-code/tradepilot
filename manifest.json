@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "外贸智能助手",
+  "version": "1.0.0",
+  "description": "外贸智能助手（TradePilot）：导出阿里国际站询盘、聊天、客户、访客数据，提供本地数据看板与 AI 聊天分析。数据只保存在本机浏览器。",
+  "permissions": ["downloads", "scripting", "storage", "unlimitedStorage"],
+  "host_permissions": [
+    "https://*.alibaba.com/*",
+    "https://alibaba.com/*",
+    "https://api.deepseek.com/*",
+    "https://dashscope.aliyuncs.com/*",
+    "https://api.openai.com/*",
+    "https://open.bigmodel.cn/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://message.alibaba.com/*",
+        "https://onetalk.alibaba.com/*",
+        "https://alicrm.alibaba.com/*",
+        "https://i.alibaba.com/hub/alicrm/*",
+        "https://data.alibaba.com/*"
+      ],
+      "js": ["vendor/xlsx.full.min.js", "src/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "外贸智能助手",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "32": "assets/icon-32.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "32": "assets/icon-32.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/icon-48.png"],
+      "matches": ["https://*.alibaba.com/*"]
+    }
+  ]
+}

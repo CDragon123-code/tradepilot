@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.zip
+
+# 导出的数据文件（含客户信息，不入库）
+*.xlsx
+*.csv
+*.json
+!manifest.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.log
