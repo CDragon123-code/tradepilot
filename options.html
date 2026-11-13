@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>外贸助手 · 客户官网访问授权</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #1c2d47; background: #f4f7fb; font: 14px/1.65 "Microsoft YaHei", "PingFang SC", sans-serif; }
+    .page { max-width: 680px; margin: 0 auto; padding: 48px 20px; }
+    .back { display: inline-block; margin-bottom: 18px; color: #225cb3; font-size: 13px; text-decoration: none; }
+    .back:hover { text-decoration: underline; }
+    .card { padding: 30px 34px; border: 1px solid #dfe7f1; border-radius: 16px; background: #fff; box-shadow: 0 10px 30px rgba(26, 52, 86, .06); }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+    .mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: #fff; background: #1858c9; font-size: 19px; font-weight: 700; }
+    .brand b { display: block; font-size: 15px; }
+    .brand small { display: block; color: #6b7e96; font-size: 11px; }
+    .eyebrow { color: #3a6bad; font-size: 11px; font-weight: 700; }
+    h1 { margin: 5px 0 10px; font-size: 23px; line-height: 1.35; }
+    p { margin: 0 0 15px; color: #51647c; }
+    .note { padding: 13px 15px; margin: 20px 0; border: 1px solid #dce7f6; border-radius: 10px; background: #f7faff; color: #49617f; font-size: 12px; }
+    button { min-height: 42px; padding: 9px 18px; border: 0; border-radius: 9px; background: #1858c9; color: #fff; font: 700 13px "Microsoft YaHei", sans-serif; cursor: pointer; }
+    button:hover { background: #104aa8; }
+    button:focus-visible, a:focus-visible { outline: 3px solid #87b6ff; outline-offset: 2px; }
+    #status { min-height: 22px; margin: 12px 0 0; font-size: 12px; font-weight: 600; }
+    .foot { margin: 22px 0 0; color: #8292a7; font-size: 11px; }
+    .field { display: block; margin: 0 0 12px; }
+    .field span { display: block; margin-bottom: 6px; color: #49617f; font-size: 12px; font-weight: 700; }
+    .field input { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid #dfe7f1; border-radius: 9px; background: #fff; color: #1c2d47; font: 14px "Microsoft YaHei", sans-serif; }
+    .field input:focus-visible { outline: 3px solid #87b6ff; outline-offset: 1px; }
+    .check { display: flex; align-items: center; gap: 8px; margin: 14px 0; color: #33465e; font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    button.ghost { background: #eef4ff; color: #1858c9; }
+    button.ghost:hover { background: #dfeaff; }
+    @media (max-width: 560px) { .page { padding-top: 24px; } .card { padding: 22px; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <a class="back" href="dashboard.html">← 返回员工工作区</a>
+    <div class="card">
+      <div class="brand"><span class="mark" aria-hidden="true">贸</span><span><b>外贸助手</b><small>员工工作台 · 可选设置</small></span></div>
+      <span class="eyebrow">客户分析</span>
+      <h1>客户官网访问授权</h1>
+      <p>需要查看客户公司官网信息时，扩展可读取公开页面的标题、简介和正文摘要，辅助判断客户类型与需求。</p>
+      <div class="note">浏览器会提示授予 HTTP/HTTPS 网站访问权限。授权后，仅在发起客户官网背调时使用；不授权也可继续使用导出、看板和其他分析功能。</div>
+      <button type="button" id="grant">授权访问客户官网</button>
+      <p id="status" role="status" aria-live="polite">检查中…</p>
+      <p class="foot">涉及客户信息的 AI 分析会使用你在扩展中配置的模型服务。</p>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <div class="brand"><span class="mark" aria-hidden="true">云</span><span><b>云端同步</b><small>数据平台 · 可选设置</small></span></div>
+      <span class="eyebrow">后端数据</span>
+      <h1>上传到云端数据平台</h1>
+      <p>开启后，每次采集入库的数据会先写入本机队列，再分批上传到你的云端服务。断网或服务不可用时自动重试，数据不会丢。</p>
+      <label class="field"><span>服务地址</span><input id="cloud-base" type="url" placeholder="https://api.example.com"></label>
+      <label class="field"><span>API Token</span><input id="cloud-token" type="password" placeholder="与服务端 API_TOKEN 一致"></label>
+      <label class="field"><span>店铺 ID</span><input id="cloud-seller" type="text" placeholder="seller-main"></label>
+      <label class="check"><input id="cloud-enabled" type="checkbox"><span>启用自动上传</span></label>
+      <div class="actions">
+        <button type="button" id="cloud-save">保存并授权域名</button>
+        <button type="button" id="cloud-backfill" class="ghost">上传现有资料库</button>
+        <button type="button" id="cloud-drain" class="ghost">立即上传队列</button>
+      </div>
+      <p id="cloud-status" role="status" aria-live="polite">检查中…</p>
+    </div>
+  </div>
+  <script src="src/options.js"></script>
+</body>
+</html>

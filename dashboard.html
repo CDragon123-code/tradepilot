@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>外贸智能助手 · 数据看板</title>
+<title>外贸助手 · 数据看板</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.65 "Microsoft YaHei", -apple-system, sans-serif; color: #111827; background: #f5f6f8; }
@@ -36,7 +36,34 @@
   .todo .t { font-weight: 600; }
   .todo .d { color: #6b7280; font-size: 12.5px; }
   .todo .a { color: #2563eb; font-size: 12px; white-space: nowrap; }
+  .todo a.a { text-decoration: none; border: 1px solid #bfdbfe; background: #eff6ff; padding: 4px 10px; border-radius: 6px; font-weight: 600; align-self: center; }
+  .todo a.a:hover { background: #dbeafe; }
+  .pill-title { display: inline-flex; align-items: center; gap: 8px; border: 2px solid #7c3aed; border-radius: 14px; padding: 9px 16px; font-size: 18px; font-weight: 800; color: #4c1d95; background: #fff; box-shadow: 0 0 0 3px rgba(124, 58, 237, .08); margin: 12px 0; }
+  .pill-count { font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #7c3aed, #2563eb); border-radius: 999px; padding: 2px 8px; }
+  .todo-card { background: #fff; border: 1px solid #e8e5f3; border-radius: 14px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 2px 10px rgba(76, 29, 149, .06); }
+  .todo-card .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .chip { font-size: 12px; padding: 3px 9px; border-radius: 8px; border: 1px solid transparent; font-weight: 600; }
+  .chip.high { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+  .chip.mid { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+  .chip.tag { background: #f3e8ff; color: #7c3aed; border-color: #ddd6fe; }
+  .chip.act { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+  .todo-card .t { font-size: 15px; font-weight: 700; margin: 2px 0 8px; color: #111827; }
+  .kv { display: grid; grid-template-columns: 74px 1fr 58px 1fr; gap: 6px 10px; font-size: 12.5px; color: #4b5563; margin-bottom: 5px; align-items: start; }
+  .kv .k { color: #9ca3af; }
+  .kv .v { word-break: break-word; }
+  .todo-foot { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+  .todo-foot .link { font-size: 12.5px; color: #7c3aed; cursor: pointer; }
+  .todo-foot .link:hover { text-decoration: underline; }
+  .todo-foot .btn { margin-left: auto; text-decoration: none; background: linear-gradient(135deg, #7c3aed, #2563eb); color: #fff; padding: 7px 14px; border-radius: 9px; font-size: 12.5px; font-weight: 700; }
+  .ai-box { margin-top: 10px; border: 1.5px solid #c4b5fd; border-radius: 12px; padding: 10px 12px; background: #faf8ff; }
+  .ai-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .ai-pill { font-size: 13px; font-weight: 800; color: #4c1d95; border: 1.5px solid #a78bfa; border-radius: 9px; padding: 3px 10px; background: #fff; }
+  .ai-more { font-size: 12px; color: #2563eb; cursor: pointer; }
+  .ai-row { font-size: 12.5px; color: #374151; margin: 3px 0; line-height: 1.55; }
+  .ai-row b { color: #111827; }
+  .unignore { color: #2563eb; cursor: pointer; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid2 > * { min-width: 0; }
   .panel { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f1f3f5; white-space: nowrap; }
@@ -56,22 +83,47 @@
   .toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff;
            padding: 9px 16px; border-radius: 8px; z-index: 99; font-size: 13px; }
 </style>
+<link rel="stylesheet" href="src/dashboard.css">
 </head>
 <body>
 <div id="app">
-  <aside>
-    <div class="logo">外贸智能助手 · 数据看板<small>扩展内置 · 数据只在本机浏览器</small></div>
-    <nav id="nav"></nav>
-    <div class="muted" style="margin:14px 6px 0;" id="statLine">—</div>
+  <aside class="app-sidebar">
+    <div class="logo"><span class="brand-mark" aria-hidden="true">贸</span><span>外贸助手<small>客户工作与数据看板</small></span></div>
+    <div class="workspace-role">员工工作区 · 本机资料库</div>
+    <nav id="nav" aria-label="工作区导航"></nav>
+    <div class="sidebar-footer"><div id="statLine" aria-live="polite">—</div><small>数据保存在本机浏览器</small></div>
   </aside>
-  <main id="view"></main>
+  <div class="app-content">
+    <header class="app-topbar">
+      <div class="crumb">员工工作区 / <span id="page-title">今日待办</span></div>
+      <a class="data-link" href="https://message.alibaba.com/message/default.htm" target="_blank" rel="noopener">打开阿里消息页 ↗</a>
+    </header>
+    <section id="platform-sync-banner" class="platform-sync-banner" aria-live="polite" hidden>
+      <div class="platform-sync-heading"><strong id="platform-sync-title">平台数据更新</strong><span id="platform-sync-percent">0%</span>
+        <button id="platform-sync-dismiss" type="button" aria-label="关闭更新结果" hidden>关闭</button></div>
+      <progress id="platform-sync-bar" max="100" value="0" aria-label="平台数据更新进度"></progress>
+      <div id="platform-sync-detail" class="platform-sync-detail"></div>
+    </section>
+    <main id="view" tabindex="-1"></main>
+  </div>
 </div>
 <div id="mask"></div>
 <div id="modal"></div>
 <script src="vendor/echarts.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
+<script src="src/data-core.js"></script>
 <script src="src/db.js"></script>
+<script src="src/sync-state.js"></script>
+<script src="src/identity.js"></script>
+<script src="src/customer-profile.js"></script>
+<script src="src/import-map.js"></script>
 <script src="src/analyze.js"></script>
+<script src="src/dify.js"></script>
+<script src="src/dashboard-ai.js"></script>
+<script src="src/unattended-shadow.js"></script>
+<script src="src/inquiry-reply.js"></script>
+<script src="src/platform-job.js"></script>
+<script src="src/ads-insight.js"></script>
 <script src="src/dashboard.js"></script>
 </body>
 </html>

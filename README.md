@@ -28,7 +28,7 @@ TradePilot is built around one weekly loop:
 5. Review everything in one dashboard: leads to follow, customers at risk, demand words.
 6. Repeat next week with a fresh export.
 
-Everything runs on the seller page you are already logged into. No backend, no scraping service, no account sharing.
+Everything runs on the seller page you are already logged into. Cloud sync is optional and disabled by default; when enabled, data is uploaded only to a server you deploy yourself.
 
 ## Features
 
@@ -38,8 +38,10 @@ Everything runs on the seller page you are already logged into. No backend, no s
 * **Chat analysis (AI)** — streaming intent grading and follow-up checklist from real chat records, with multi-turn questions.
 * **Customer export** — "My customers" and "Public pool", filterable by created / claimed / pool-entry date.
 * **Visitor export** — store visitor rows including search terms, source words, dwell time and RFQ count (keep one range under ~30 days).
-* **Data dashboard** — built-in page with today's to-dos, inquiry leads, customer assets, demand words, weekly report, and a library of imported files.
+* **Ads diagnosis** — one-click collection of account/plan/product/geo/search-term reports, with 90-day diagnosis, 14-day forecast, margin and value matrix.
+* **Data dashboard** — built-in page with today's to-dos, inquiry leads, customer assets, demand words, ads diagnosis, weekly report, and a library of imported files.
 * **Local library** — every export is ingested automatically; existing `.xlsx` files can be imported too.
+* **Optional cloud sync** — ingested rows go into a local outbox and upload to your own server in batches, with retry and resume.
 * **OpenAI-compatible models** — DeepSeek, Qwen, OpenAI, Zhipu GLM or any custom `/chat/completions` endpoint.
 
 ## Dashboard
@@ -50,6 +52,7 @@ Everything runs on the seller page you are already logged into. No backend, no s
 | Inquiry Leads       | Channel performance, country mix, buyer level, and untransformed leads ranked first.       |
 | Customer Assets     | High-value customers, churn warnings, and public-pool picks by level.                      |
 | Demand Words        | Real buyer search terms from visitors plus high-frequency words from inquiries and chats.  |
+| Ads Diagnosis       | 90-day ads diagnosis, 14-day forecast, attribution and value matrix.                       |
 | Weekly Report       | Full breakdown tables for inquiry, customer, and chat dimensions.                          |
 | Library             | Import, inspect, and delete ingested files; export/import the whole local database.        |
 | Settings            | Model presets, Base URL, API Key, and model name.                                          |
