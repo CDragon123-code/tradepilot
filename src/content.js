@@ -2,7 +2,8 @@
 // 依据阿里页面自身接口（询盘 subjectList.htm；聊天 onetalk messageManager 系列），独立实现，不参考任何闭源插件代码。
 (function () {
   'use strict';
-  const VERSION = '0.21.18';
+  const VERSION = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest)
+    ? chrome.runtime.getManifest().version : '0.35.15';
   console.log('[ali-export-ext] v' + VERSION + ' loaded on', location.href, 'top=', window.self === window.top);
 
   const API = {
@@ -74,6 +75,15 @@
   const CHAT_HEADERS = ['发送时间', '角色', '发言人', '内容', '会话'];
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 云端自动更新保护：批量发送期间写标记，后台检测到新版本时先不重载扩展，避免打断发送
+  let UPDATE_HOLD_DEPTH = 0;
+  function holdUpdate(on) {
+    try {
+      UPDATE_HOLD_DEPTH = Math.max(0, UPDATE_HOLD_DEPTH + (on ? 1 : -1));
+      const p = chrome.storage.local.set({ aliUpdateHold: UPDATE_HOLD_DEPTH > 0 ? Date.now() : 0 });
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
   // 请求节流：基础间隔 + 随机抖动，模拟人工点击的不规则节奏
   const pace = () => sleep(THROTTLE_MS + Math.floor(Math.random() * THROTTLE_JITTER));
   const getCookie = (n) => {
@@ -394,7 +404,10 @@
     if (row[6] === false || row[6] === 'false') row[6] = '否';
     row[11] = fmtDate(row[11]);
     row[18] = fmtDate(row[18]);
-    if (!row[3] && item.sender && typeof item.sender === 'string') row[3] = item.sender;
+    // 列表接口的 sender 既可能是字符串，也可能是 { name } 对象；补全失败时至少保住客户名
+    if (!row[3] && item.sender) {
+      row[3] = typeof item.sender === 'string' ? item.sender : (item.sender.name || item.sender.nickName || '');
+    }
     row[15] = sourceCn(row[15]);
     row[16] = appFromToCn(row[16]);
     row[17] = replyStatusCn(row[17]);
@@ -620,7 +633,8 @@
   const API_ORDER = 'https://biz.alibaba.com/list/ajax/ta/mainv2.json';
   const ORDER_HEADERS = [
     '订单ID', '订单状态', '平台状态', '成交金额', '币种', '下单时间', '客户名称', '公司名称', '买家ID', '国家/地区',
-    '业务员', '产品数', '产品总数量', '产品小计', '运费', '已付金额', '运输方式', '订单类型', '业务类型', '产品明细', '询盘ID', '订单链接',
+    '业务员', '产品数', '产品总数量', '产品小计', '运费', '已付金额', '运输方式', '订单类型', '业务类型', '产品明细',
+    '询盘ID', '归因方式', '归因置信度', '订单链接',
   ];
   // 平台状态 → 本机口径（data-core.wonOrder 只认「已付款 / 已完成 / 交易成功」）
   const ORDER_STATUS_MAP = {
@@ -689,41 +703,20 @@
     throw last || new Error('订单第 ' + page + ' 页采集失败');
   }
 
-  // 订单没有平台询盘ID：用本地已入库询盘按 客户名/公司名 做弱匹配，命中就填，供参考
-  const orderNorm = (v) => {
-    if (self.AliIdentity && self.AliIdentity.normalize) return self.AliIdentity.normalize(v);
-    return String(v === undefined || v === null ? '' : v).toLowerCase()
-      .replace(/[\s\u3000]+/g, '').replace(/[.,，。()（）"'&·\-]/g, '').trim();
-  };
+  // 订单没有平台询盘ID：优先买家ID（AliID/旺旺/客户ID）→ 公司名 → 客户名 → 词序/包含
   async function orderInquiryIndex() {
     try {
       const r = await chrome.runtime.sendMessage({ type: 'inquiryIndex' });
-      if (!r || !r.ok || !Array.isArray(r.list)) return [];
-      return r.list.map((x) => ({
-        id: String(x.id || ''),
-        keys: (x.names || []).map(orderNorm).filter((k) => k && k.length >= 3),
-        t: String(x.t || ''),
-      })).filter((x) => x.id && x.keys.length);
+      if (!r || !r.ok || !self.AliOrderMatch) return { inquiries: [], customerKeys: new Map() };
+      return self.AliOrderMatch.hydrateIndex({ inquiries: r.inquiries || [], customers: r.customers || [] });
     } catch (e) {
       console.warn('[ali-export-ext] 询盘索引不可用', e);
-      return [];
+      return { inquiries: [], customerKeys: new Map() };
     }
   }
-  function matchOrderInquiry(name, company, idx) {
-    const q = [name, company].map(orderNorm).filter((k) => k && k.length >= 3);
-    if (!q.length || !idx.length) return '';
-    let best = '', bestScore = 0, bestT = '';
-    for (const it of idx) {
-      for (const k of it.keys) {
-        for (const t of q) {
-          const score = k === t ? 2 : ((k.indexOf(t) >= 0 || t.indexOf(k) >= 0) ? 1 : 0);
-          if (score > bestScore || (score === bestScore && score > 0 && it.t > bestT)) {
-            bestScore = score; best = it.id; bestT = it.t;
-          }
-        }
-      }
-    }
-    return best;
+  function matchOrderInquiry(name, company, buyerId, orderTime, idx) {
+    if (!self.AliOrderMatch) return { id: '', way: '未归因', confidence: '' };
+    return self.AliOrderMatch.match({ name: name, company: company, buyerId: buyerId, orderTime: orderTime }, idx);
   }
 
   function orderRowOf(o, idx) {
@@ -739,6 +732,7 @@
     const detail = products.map((p) => String(p.name || '') + ' × ' + String((p.quantity && p.quantity.number) || '') + String(p.unit || '')).join('；').slice(0, 800);
     let link = String((st.detailUrl || b.detailUrl || ''));
     if (link.indexOf('//') === 0) link = 'https:' + link;
+    const m = matchOrderInquiry(buyer.fullName || '', buyer.companyName || '', buyer.aliId || '', b.createTime || '', idx);
     return [
       b.id || '', ORDER_STATUS_MAP[raw] || raw, raw, amt(pi.totalAmount), pi.currency || '', b.createTime || '',
       buyer.fullName || '', buyer.companyName || '', buyer.aliId || '',
@@ -748,7 +742,7 @@
       (view.shippingType && (view.shippingType.mcmsValue || view.shippingType.original)) || '',
       b.onlineType === 'ONLINE' ? '线上' : (b.orderCreateType || ''),
       b.businessType === 'trade_assurance' ? '信保订单' : (b.businessType || ''),
-      detail, matchOrderInquiry(buyer.fullName, buyer.companyName, idx || []), link,
+      detail, m.id, m.way, m.confidence, link,
     ];
   }
 
@@ -895,7 +889,8 @@
     { i: 3, k: '客户名称' }, { i: 14, k: '国家' }, { i: 15, k: '来源' }, { i: 4, k: '负责人' },
     { i: 7, k: '买家等级' }, { i: 6, k: '是否已加为客户' }, { i: 2, k: '创建时间' }, { i: 21, k: '询盘主题' },
   ];
-  let invViewState = null; // { data, country, dedupe, onlyStale }
+  let invViewState = null; // { data, country, dedupe, onlyStale, range }
+  let INV_VIEW_DRAFT = null; // 询盘增强：关闭面板后暂存，重开恢复；切换其它功能时丢弃
 
   function invFiltered() {
     const s = invViewState;
@@ -913,9 +908,13 @@
     if (s.onlyStale) rows = rows.filter((d) => { const t = buyerLocal(d.row[2], d.row[14]); return t && !t.isToday; });
     return rows;
   }
-  function closeInquiryView() {
+  function closeInquiryView(opts) {
     const el = document.getElementById('ali-inv-view');
-    if (el) el.remove();
+    if (el) {
+      // 用户主动关闭：暂存采集结果与筛选条件，重开直接恢复；切换其它功能时丢弃
+      if (!(opts && opts.discard) && invViewState) INV_VIEW_DRAFT = invViewState;
+      el.remove();
+    }
     invViewState = null;
   }
   function renderInquiryView() {
@@ -967,6 +966,12 @@
   }
   async function openInquiryView(startDate, endDate, btn) {
     if (document.getElementById('ali-inv-view')) { closeInquiryView(); return; } // 再点一次关闭
+    closeFeaturePanels('ali-inv-view'); // 打开询盘增强时关掉其它功能面板
+    const draft = INV_VIEW_DRAFT;
+    INV_VIEW_DRAFT = null;
+    const range = [startDate || '', endDate || ''];
+    const useDraft = !!(draft && draft.data && draft.range
+      && draft.range[0] === range[0] && draft.range[1] === range[1]);
     btn.disabled = true;
     const box = document.createElement('div');
     box.id = 'ali-inv-view';
@@ -992,18 +997,40 @@
     document.body.appendChild(box);
     box.querySelector('#ali-inv-close').onclick = () => closeInquiryView();
     const prog = (t) => { const el = box.querySelector('#ali-inv-prog'); if (el) el.textContent = t; };
-    try {
-      const data = await collectInquiry(startDate, endDate, (p, n) => prog(`已取 ${n} 条…`), true, (n) => prog(`补全客户 ${n} 条…`));
-      invViewState = { data, country: '全部', dedupe: true, onlyStale: false };
-      const list = Array.from(new Set(data.map((d) => String(d.row[14] || '').trim()).filter(Boolean))).sort();
+    // 数据与筛选就位后统一渲染：首次采集与关闭后恢复共用
+    const applyData = (data, prev) => {
+      if (!document.getElementById('ali-inv-view')) return; // 采集期间面板已被关闭
+      invViewState = {
+        data,
+        country: (prev && prev.country) || '全部',
+        dedupe: prev ? !!prev.dedupe : true,
+        onlyStale: prev ? !!prev.onlyStale : false,
+        range,
+      };
+      const countries = Array.from(new Set(data.map((d) => String(d.row[14] || '').trim()).filter(Boolean))).sort();
       const sel = box.querySelector('#ali-inv-country');
-      sel.innerHTML = '<option value="全部">全部</option>' + list.map((c) => `<option>${escHtml(c)}</option>`).join('');
+      sel.innerHTML = '<option value="全部">全部</option>' + countries.map((c) => `<option>${escHtml(c)}</option>`).join('');
+      const hasCountry = Array.prototype.some.call(sel.options, (o) => o.value === invViewState.country);
+      if (!hasCountry) invViewState.country = '全部';
+      sel.value = invViewState.country;
       sel.onchange = () => { invViewState.country = sel.value; renderInquiryView(); };
-      box.querySelector('#ali-inv-dedupe').onchange = (e) => { invViewState.dedupe = e.target.checked; renderInquiryView(); };
-      box.querySelector('#ali-inv-stale').onchange = (e) => { invViewState.onlyStale = e.target.checked; renderInquiryView(); };
+      const dcb = box.querySelector('#ali-inv-dedupe');
+      dcb.checked = invViewState.dedupe;
+      dcb.onchange = (e) => { invViewState.dedupe = e.target.checked; renderInquiryView(); };
+      const scb = box.querySelector('#ali-inv-stale');
+      scb.checked = invViewState.onlyStale;
+      scb.onchange = (e) => { invViewState.onlyStale = e.target.checked; renderInquiryView(); };
       box.querySelector('#ali-inv-export').onclick = (e) => exportInquiryFiltered(e.target);
       prog(`共 ${data.length} 条`);
       renderInquiryView();
+    };
+    try {
+      if (useDraft) {
+        applyData(draft.data, draft); // 关闭后重开：直接恢复上次采集结果与筛选
+      } else {
+        const data = await collectInquiry(startDate, endDate, (p, n) => prog(`已取 ${n} 条…`), true, (n) => prog(`补全客户 ${n} 条…`));
+        applyData(data, null);
+      }
     } catch (e) { prog('采集失败：' + e.message); }
     finally { btn.disabled = false; }
   }
@@ -1643,9 +1670,17 @@
     { id: 'custom', label: '自定义', baseUrl: '', model: '' },
   ];
   const loadAiCfg = async () => {
-    try { const o = await chrome.storage.local.get(AI_CFG_KEY); return (o && o[AI_CFG_KEY]) || null; } catch (e) { return null; }
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'secureGet', key: AI_CFG_KEY });
+      if (r && r.ok) return r.value || null;
+      console.warn('[ali-export-ext] AI 配置读取失败', r && r.error, r && r.message);
+      return null;
+    } catch (e) { return null; }
   };
-  const saveAiCfg = async (cfg) => { try { await chrome.storage.local.set({ [AI_CFG_KEY]: cfg }); } catch (e) { /* ignore */ } };
+  const saveAiCfg = async (cfg) => {
+    const r = await chrome.runtime.sendMessage({ type: 'secureSet', key: AI_CFG_KEY, value: cfg });
+    if (!r || !r.ok) throw new Error((r && r.message) || '保存失败');
+  };
 
   // 给智能体（WorkBuddy / Codex / 豆包）的接入信息 + 可直接粘贴的提示词
   const buildMcpOnboarding = (syncText) => `【阿里国际站外贸助手 · MCP 接入信息】
@@ -1996,10 +2031,14 @@
       }
       const perm = await ensureAiHost(cfg.baseUrl);
       if (!perm.ok) { $('ali-ai-msg').textContent = perm.error; return; }
-      await saveAiCfg(cfg);
-      curLine();
-      $('ali-ai-msg').textContent = '已保存 ✅ 建议点「测试连接」验证一下';
-      toast('AI 模型配置已保存');
+      try {
+        await saveAiCfg(cfg);
+        curLine();
+        $('ali-ai-msg').textContent = '已加密保存 ✅ 建议点「测试连接」验证一下';
+        toast('AI 模型配置已加密保存');
+      } catch (e) {
+        $('ali-ai-msg').textContent = '保存失败：' + e.message;
+      }
     };
     $('ali-ai-test').onclick = async () => {
       const cfg = readForm();
@@ -2388,7 +2427,7 @@
   }
 
   function buildFollowupSys(f) {
-    return '你是资深外贸跟进顾问，服务一家阿里国际站供应商。\n'
+    return '你是资深外贸跟进顾问，服务一家做齿科 3D 打印树脂、隐形矫正片材与整线设备的阿里国际站供应商。\n'
       + '目标：先用平台资料做客户/公司背调，再给针对性跟进策略和一条高回复率消息。\n\n'
       + '【硬性规则】\n'
       + '1. 只分析下面名单里的客户；不得用买家累计金额或“已加为客户”推断本店成交。\n'
@@ -2405,6 +2444,8 @@
   const AI_HIST_KEY = 'aliChatAnalysis';   // 对话记录持久化：下次打开直接恢复，不重新开始
   const AI_PANEL_OPEN_KEY = 'aliAiPanelOpen';
   const AI_FOCUS_CARD_KEY = 'aliAiFocusCard';
+  // 输入框草稿：仅当前页面内存，关闭面板后重开恢复；刷新页面丢失
+  let AI_INPUT_DRAFT = null; // { key, text }
   const activeAiWorkspace = async () => String((await chrome.storage.local.get('aliActiveWorkspace')).aliActiveWorkspace || 'default');
   const aiStateKey = (workspace, focus) => AI_HIST_KEY + ':' + encodeURIComponent(workspace)
     + (focus ? ':' + encodeURIComponent(focus) : '');
@@ -2414,11 +2455,26 @@
   const platformSyncAt = async (workspace) => (await self.AliSyncState.load(chrome.storage.local, workspace)).syncAtMs;
 
   // 其他操作面板互斥；右侧 AI 客户助手独立保留，便于边看分析边回复。
+  // 功能面板草稿：关闭面板后保留，重新打开恢复；切换到其它功能面板时丢弃
+  let EXPO_DRAFT = null;
+  let EXPO_BUSY = false;
+  let DT_DRAFT = null;
   function closeFeaturePanels(exceptId) {
+    // 打开的是其它功能（或关闭全部）时，丢弃未保留功能的草稿；只有重新打开同一功能时才保留
+    if (exceptId !== 'ali-expo-box') EXPO_DRAFT = null;
+    if (exceptId !== 'ali-dt-box') DT_DRAFT = null;
+    if (exceptId !== 'ali-inv-view') {
+      INV_VIEW_DRAFT = null;
+      closeInquiryView({ discard: true });
+    }
     ['ali-dt-box', 'ali-expo-box'].forEach((id) => {
       if (exceptId && id === exceptId) return;
       const el = document.getElementById(id);
-      if (el) el.remove();
+      if (el) {
+        if (id === 'ali-expo-box' && el.__expoStop) el.__expoStop();
+        if (id === 'ali-dt-box' && el.__dtStop) el.__dtStop();
+        el.remove();
+      }
     });
   }
 
@@ -2430,6 +2486,7 @@
     const cfgReady = !!(cfg && cfg.baseUrl && cfg.apiKey && cfg.model);
     const focusName = await currentAiFocusName();
     const workspace = await activeAiWorkspace();
+    const aiDraftKey = String(workspace) + '|' + String(focusName || '');
     const stateKey = aiStateKey(workspace, focusName);
     const focusCardKey = aiFocusCardKey(workspace, focusName);
     const focusSaved = focusName ? await chrome.storage.local.get(focusCardKey).catch(() => ({})) : {};
@@ -2473,6 +2530,11 @@
     const sideHandle = document.getElementById('ali-ai-sidecar-handle');
     if (sideHandle) sideHandle.style.display = 'none';
     const $ = (id) => box.querySelector('#' + id);
+    // 关闭面板后重开：恢复未发送的追问草稿（仅当前页面内存）
+    if (AI_INPUT_DRAFT && AI_INPUT_DRAFT.key === aiDraftKey && AI_INPUT_DRAFT.text) {
+      $('ali-ai-in').value = AI_INPUT_DRAFT.text;
+    }
+    $('ali-ai-in').oninput = () => { AI_INPUT_DRAFT = { key: aiDraftKey, text: $('ali-ai-in').value }; };
     if (focusName) {
       const focus = $('ali-ai-focus');
       focus.style.display = 'block';
@@ -2826,7 +2888,7 @@
       } catch (err) { toast('导出失败：' + err.message, true); }
       finally { b.disabled = false; }
     };
-    const submit = () => { const t = $('ali-ai-in').value; $('ali-ai-in').value = ''; ask(t); };
+    const submit = () => { const t = $('ali-ai-in').value; $('ali-ai-in').value = ''; AI_INPUT_DRAFT = { key: aiDraftKey, text: '' }; ask(t); };
     $('ali-ai-send').onclick = submit;
     $('ali-ai-in').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } };
     setBtns();
@@ -2868,14 +2930,31 @@
     await collectAndAnalyze();
   }
 
-  // ---------------- 非主营成品需求 · AI 跟进（半自动回复，示例） ----------------
-  // 判定口径：只认「买家说过」的成品/整机类词；我方消息不单独判定，避免误命中
-  // 候选词仅为示例，请按你的行业替换；最终分类由 AI 判断
-  const FINISHED_RE = /(finished\s+goods|ready[-\s]?made|end\s+products?|complete\s+(?:units?|sets?)|turnkey|成品|整机|现货|代工)/gi;
+  // ---------------- 假牙客户 · AI 跟进（半自动回复） ----------------
+  // 判定口径：只认「买家说过」的假牙类词；我方消息只加分、不单独判定，避免自说自话误命中
+  // 候选词：英文 + 主要小语种 + 中文（只用于决定是否送 AI，最终分类由 AI 判断）
+  const DENTURE_RE = new RegExp([
+    '\\b(dentures?|false\\s+teeth|artificial\\s+teeth|fake\\s+teeth|acrylic\\s+(?:teeth|denture)|denture\\s+(?:base|teeth)|partial\\s+denture|full\\s+denture|removable\\s+denture|dental\\s+prosthe\\w*)\\b',
+    'dentaduras?', 'pr[oó]tesis\\s+dental(?:es)?', 'dientes\\s+postizos',                 // 西
+    'pr[oó]teses?\\s+dent[aá]ri[ao]s?', 'dentadura\\s+posti[cç]a', 'dentes\\s+posti[cç]os', // 葡
+    'dentiers?', 'proth[eè]se\\s+dentaire', 'fausses\\s+dents',                          // 法
+    'zahnersatz', 'zahnprothesen?', 'k[uü]nstliche\\s+z[aä]hne', 'gebiss',               // 德
+    'dentiere', 'protesi\\s+dentale', 'denti\\s+finti',                                  // 意
+    'kunstgebit', 'gebitsprothese', 'valse\\s+tanden',                                   // 荷
+    'protez[^\\s]*\\s+z[eę]bow[^\\s]*', 'sztuczne\\s+z[eę]by', 'protez[^\\s]*\\s+dentystyczn[^\\s]*', // 波
+    'зубн[а-яё]*\\s+протез[а-яё]*', 'вставные\\s+зубы', 'съ[её]мн[а-яё]*\\s+протез[а-яё]*', 'штучн[а-яё]*\\s+зуб[а-яё]*', // 俄/乌
+    'takma\\s+di[şs]', 'protez\\s+di[şs]', 'damak\\s+protezi',                          // 土
+    'طقم\\s*أسنان', 'أطقم\\s*أسنان', 'طقم\\s*اسنان', 'أسنان\\s*صناعية',                  // 阿
+    'răng\\s*giả', 'hàm\\s*giả', 'răng\\s*tháo\\s*lắp',                                  // 越
+    'ฟันปลอม', 'ฟันเทียม',                                                                // 泰
+    'gigi\\s*palsu', 'protesa\\s*gigi', 'gigi\\s*tiruan',                                // 印尼/马来
+    '틀니', '의치', '入れ歯', '義歯',                                                      // 韩/日
+    '假牙', '义齿', '牙托', '树脂牙', '全口牙', '局部义齿', '活动假牙', '全口义齿',          // 中
+  ].join('|'), 'gi');
   const CUSTOMER_TYPE_LABEL = {
-    type_a: '客户类型 A', type_b: '客户类型 B', distributor: '经销商', oem: 'OEM/贴牌', unknown: '未识别',
+    dental_lab: '牙科技工所', dso: 'DSO/中央技工所', aligner_factory: '隐形矫正工厂',
+    distributor: '牙科经销商', clinic: '牙科诊所', oem: 'OEM/贴牌', unknown: '未识别',
   };
-
   const SEND_API_KEY = 'aliSendApi';        // 抓取到的发送请求模板
   const PENDING_SEND_KEY = 'aliPendingSend'; // 列表页点发送 → 聊天窗口加载后自动发送
   const SMART_REPLY_KEY = 'aliSmartReply';   // 工作台人工确认的询盘回复 → 聊天窗口加载后发送
@@ -2884,7 +2963,7 @@
   const INBOX_PROBE_RESULT_KEY = 'aliInboxProbeResult';
   const INBOX_AUTOTEST_KEY = 'aliInboxAutoTest'; // 工作台「自动测试」队列
   const INBOX_AUTOTEST_RESULT_KEY = 'aliInboxAutoTestResult';
-  const FINISHED_LOG_KEY = 'aliFinishedLog';  // { date, count, customers:{客户键: 最后客户消息时间} }
+  const DENTURE_LOG_KEY = 'aliDentureLog';  // { date, count, customers:{客户键: 最后客户消息时间} }
   const SEND_MAX_PER_DAY = 20;              // 保守：全局每天 20 条
   const SEND_GAP_MIN = 8000, SEND_GAP_MAX = 20000; // 每条之间随机 8-20 秒
   const dayKey = () => new Date().toISOString().slice(0, 10);
@@ -2940,12 +3019,12 @@
     for (let i = s.msgs.length - 1; i >= 0; i--) if (!s.msgs[i].mine) return s.msgs[i].ts || 0;
     return 0;
   }
-  function finishedHit(s) {
+  function dentureHit(s) {
     const hits = new Set();
     let buyer = 0, ours = 0;
     for (const m of s.msgs) {
       if (isChatNoise(m.c)) continue;
-      const found = m.c.match(FINISHED_RE);
+      const found = m.c.match(DENTURE_RE);
       if (!found || !found.length) continue;
       found.forEach((x) => hits.add(String(x).toLowerCase()));
       if (m.mine) ours += found.length; else buyer += found.length;
@@ -2962,40 +3041,53 @@
     return s.msgs.filter((m) => !isChatNoise(m.c)).slice(-(n || 40))
       .map((m) => m.t + (m.mine ? ' 我方：' : ' 客户：') + m.c.slice(0, 300)).join('\n');
   }
-  async function analyzeFinished(sess, cfg) {
-    const sys = '你是阿里国际站供应商的外贸助理。\n\n'
+  async function analyzeDenture(sess, cfg) {
+    const sys = '你是齿科 3D 打印树脂与数字化生产方案供应商（类似 TradePilot）的外贸助理。\n\n'
       + '【公司产品】\n'
-      + '（示例占位：请替换为你自己的产品线）\n'
-      + '1) 主营产品线 A：产品 A1 / A2\n'
-      + '2) 主营产品线 B：产品 B1 / B2\n'
-      + '3) 配套服务：安装、培训、技术支持\n'
-      + '4) OEM / 贴牌：按需定制\n\n'
+      + '1) 牙科 3D 打印树脂（13+ 款）：\n'
+      + '   - Orthodontics：4D Clear Aligner Resin、IBT Resin、Hard Splint、Soft Splint\n'
+      + '   - Crown & Bridge：Permanent Crown Resin 25%/55%、Temp C&B Resin\n'
+      + '   - Implantology：Surgical Guide Resin、High Precision Implant Model、Fixed Hybrid Dentures Resin\n'
+      + '   - Prosthodontics：Denture Base Resin、Invisible/Flexible Denture Base、Gingiva Mask Resin\n'
+      + '   - Model & Lab：High Temp Resistant Model、Water Washable Dental Model、Wax Casting Resin\n'
+      + '2) Clear Aligner 片材：FLEX / DURA / CLEAR，0.50 / 0.75 / 1.00 mm\n'
+      + '3) 设备：桌面 LCD；工业 DLP RF-4030 / RF-4050 / RF-8800；热成型、清洗、激光打标、机器人修边\n'
+      + '4) Clear Aligner 整线：打印 → 热成型 → 打标 → 修边 → QC\n'
+      + '5) 数字层：切片软件、打印参数库（61 个打印机组 / 1,065 个 profile）、生产管理\n'
+      + '6) 服务：安装、培训、参数指导、后处理 SOP、技术支持\n'
+      + '7) OEM / Private Label：配方定制、贴牌\n\n'
       + '【目标客户】\n'
-      + '- type_a：客户类型 A\n'
-      + '- type_b：客户类型 B\n'
-      + '- distributor：经销商\n'
-      + '- oem：OEM / 贴牌\n\n'
-      + '【公司不做】不生产、不销售非主营的成品，也不承接相关加工。\n'
+      + '- dental_lab：牙科技工所——模型、导板、冠桥、义齿基托、咬合垫、正畸树脂\n'
+      + '- dso：DSO / 中央技工所——多站点标准化、质量追溯\n'
+      + '- aligner_factory：隐形矫正工厂——整线、模型树脂、片材\n'
+      + '- distributor：牙科经销商——产品组合、区域/独家、培训\n'
+      + '- clinic：牙科诊所——桌面打印机、模型/导板/临时冠/咬合垫\n'
+      + '- oem：OEM / 贴牌——配方定制\n\n'
+      + '【公司不做】不生产、不销售假牙/义齿成品，也不承接假牙加工。\n'
       + '【语言】客户可能使用西班牙语/葡萄牙语/法语/德语/意大利语/俄语/阿拉伯语/土耳其语/越南语/泰语/印尼语/韩语/日语，请用客户语言理解并回复。\n\n'
       + '【分类】\n'
-      + '- target：客户在采购主营产品、设备、材料或技术支持\n'
-      + '- mismatch_finished：客户要的是非主营的成品/整机，或外包加工\n'
+      + '- target：上述客户在采购树脂、打印机、片材、整线、参数或技术支持（含 denture base resin / invisible denture base / gingiva mask）\n'
+      + '- mismatch_denture：采购成品假牙/义齿、树脂牙/牙片、成品人工牙，或外包假牙加工\n'
       + '- unclear：信息不足，无法判断\n\n'
       + '只输出严格 JSON（不要 markdown 代码块）：\n'
-      + '{"category":"target|mismatch_finished|unclear",'
-      + '"customer_type":"type_a|type_b|distributor|oem|unknown",'
+      + '{"category":"target|mismatch_denture|unclear",'
+      + '"customer_type":"dental_lab|dso|aligner_factory|distributor|clinic|oem|unknown",'
       + '"need_reply":true/false,"reason":"中文一句话",'
       + '"intent":"询价|索样|确认规格|催货|售后|闲聊|其他","stage":"新询盘|报价中|打样|待成交|售后",'
       + '"language":"en","reply":"给客户的回复原文","risk":"需要人工确认的点，没有则空"}\n'
       + '规则：\n'
-      + '- 只有 mismatch_finished 才生成婉拒回复；target 和 unclear 的 reply 留空、need_reply=false\n'
+      + '- 只有 mismatch_denture 才生成婉拒回复；target 和 unclear 的 reply 留空、need_reply=false\n'
+      + '- 关键区分：denture base resin / invisible denture base / flexible denture base / gingiva mask = 我们的产品（target）；'
+      + 'finished dentures / false teeth / denture teeth / artificial teeth / 假牙成品 / 义齿加工 = mismatch\n'
       + '- 客户身份按对话判断；判断不了就填 unknown\n'
       + '- 婉拒话术：用客户语言；25-60 词；像真人业务员在聊天，不要像公司声明或法律条款；'
-      + '友好、自然、简短；英文用缩写；不要以 Dear 开头\n'
-      + '- 结构：先感谢/回应 → 轻松说明我们不做该类成品 → 一句话说我们主营什么 → 友好收尾\n'
+      + '友好、自然、简短；英文用缩写（we don\'t / I\'m / that\'s）；不要以 Dear 开头\n'
+      + '- 结构：先感谢/回应 → 轻松说明我们不做成品假牙 → 一句话说我们做 3D 打印树脂（如 denture base / gingiva mask）→ 友好收尾\n'
+      + '- 禁止生硬表达：To clarify our scope / we do not manufacture or supply / Apologies for any confusion / artificial teeth；'
+      + '如果要为之前的回复道歉，只用一句 "Sorry for the confusion earlier."，不要反复解释\n'
+      + '- 示例（英文）："Thanks for reaching out! Just to be upfront — we don\'t make finished denture teeth or acrylic teeth, so this one isn\'t something we can supply. We focus on 3D printing resins for dental labs, like denture base and gingiva mask resins. If you ever need those, happy to help. Hope you find a good teeth supplier soon!"\n'
       + '- 不推销、不报价、不承诺样品；不提及 AI\n'
       + '- 若聊天里我方已经明确拒绝过，need_reply=false，reply 留空';
-
     const user = '客户：' + sess.name + '\n聊天记录：\n' + transcriptOf(sess, 40);
     const txt = await callAi([{ role: 'system', content: sys }, { role: 'user', content: user }], { cfg });
     return parseAiJson(txt);
@@ -3095,20 +3187,38 @@
     return null;
   }
   const UI_ITEM_SEL = 'li.contact-item, [class*="contact-item"], [class*="conversation-item"], [class*="session-item"], [class*="result-item"], [class*="search-item"], [class*="search-result"], [class*="searchResult"], [role="listitem"], [role="option"], li';
+  const uiNormText = (s) => String(s === undefined || s === null ? '' : s).replace(/\s+/g, '').toLowerCase();
+  // 会话匹配用的无效短值/占位值：NA、n/a、无、- 等不能作为匹配依据
+  // （曾出现：客户「abelsousa NA」的别名 NA 命中「106 dravannity NA」，导致发错客户）
+  const UI_KEY_PLACEHOLDERS = new Set(['na', 'n/a', 'none', 'null', 'undefined', 'unknown', '-', '无', '未填写', '暂无', '未提供', '不适用', 'nocompany']);
+  function uiKeyOf(v, min) {
+    const n = uiNormText(v);
+    if (!n || UI_KEY_PLACEHOLDERS.has(n)) return '';
+    return n.length >= (min || 4) ? n : '';
+  }
+  // 严格匹配：只认完整姓名/登录名/客户ID/公司（长度足够且非占位值），
+  // 不做前缀或相近名字匹配，避免把消息发给名字相似的客户。
   function uiMatchConversation(el, sess) {
     const t = uiText(el);
     if (!t || t.length > 600) return false;   // 只排除包住整列的大容器
-    const keys = [sess && sess.name, sess && sess.ct && sess.ct.loginId, sess && sess.ct && sess.ct.accountId]
-      .filter(Boolean).map(String);
-    return keys.some((k) => k && t.indexOf(k) >= 0);
+    const n = uiNormText(t);
+    const nameKey = uiKeyOf(sess && sess.name, 3);
+    if (nameKey && n.indexOf(nameKey) >= 0) return true;
+    const loginKey = uiKeyOf(sess && sess.ct && sess.ct.loginId, 3);
+    if (loginKey && n.indexOf(loginKey) >= 0) return true;
+    const accountKey = uiKeyOf(sess && sess.ct && sess.ct.accountId, 4);
+    if (accountKey && n.indexOf(accountKey) >= 0) return true;
+    return ((sess && sess.aliases) || []).some((a) => {
+      const k = uiKeyOf(a, 4);
+      return !!k && n.indexOf(k) >= 0;
+    });
   }
-  // 名字被截断时（EDWIN C...）才用前 6 个字符兜底，且只作为精确匹配失败后的第二选择
+  // 名字被截断时（EDWIN C...）才用前 6 个字符兜底；仅用于导航，不用于发送
   function uiMatchConversationLoose(el, sess) {
     const t = uiText(el);
     if (!t || t.length > 300) return false;
-    const norm = (s) => String(s || '').replace(/\s+/g, '').toLowerCase();
-    const head = norm(sess && sess.name).slice(0, 6);
-    return head.length >= 5 && norm(t).indexOf(head) >= 0;
+    const head = uiNormText(sess && sess.name).slice(0, 6);
+    return head.length >= 5 && uiNormText(t).indexOf(head) >= 0;
   }
   function uiFindBy(sess, loose) {
     let best = null;
@@ -3123,9 +3233,10 @@
     });
     return best;
   }
-  function uiFindConversation(sess) {
+  function uiFindConversation(sess, strict) {
     if (!sess) return null;
-    return uiFindBy(sess, false) || uiFindBy(sess, true);
+    // strict：发送场景只认严格匹配，绝不退到「名字前缀相近」的客户
+    return uiFindBy(sess, false) || (strict ? null : uiFindBy(sess, true));
   }
   function uiFindContactScroller() {
     let cands = [];
@@ -3154,7 +3265,7 @@
     return null;
   }
   // 会话列表是虚拟滚动的：分步往下滚，每步都找一次（直接跳到底会漏掉中间项）
-  async function uiScrollFind(sess) {
+  async function uiScrollFind(sess, strict) {
     const sc = uiFindContactScroller();
     const total = () => (sc ? sc.scrollHeight : (document.scrollingElement ? document.scrollingElement.scrollHeight : 0));
     const top = () => (sc ? sc.scrollTop : (window.scrollY || 0));
@@ -3164,7 +3275,7 @@
     try { to(0); } catch (e) { /* ignore */ }
     await uiWait(300);
     for (let i = 0; i < 30; i++) {
-      const item = uiFindConversation(sess);
+      const item = uiFindConversation(sess, strict);
       if (item) return item;
       const before = top();
       const step = Math.max(200, Math.floor(view() * 0.8));
@@ -3172,19 +3283,19 @@
       await uiWait(350);
       if (top() === before) break;
     }
-    return uiFindConversation(sess);
+    return uiFindConversation(sess, strict);
   }
-  async function uiRevealConversation(sess) {
-    let item = uiFindConversation(sess);
+  async function uiRevealConversation(sess, strict) {
+    let item = uiFindConversation(sess, strict);
     if (item) return item;
     // 搜索最可靠：命中后平台会把该客户顶到列表最前面
-    item = await uiSearchConversation(sess);
+    item = await uiSearchConversation(sess, strict);
     if (item) return item;
     // 搜索不可用时：清掉可能残留的筛选词，再分步滚动
     await uiClearSearch();
-    item = await uiScrollFind(sess);
+    item = await uiScrollFind(sess, strict);
     if (item) return item;
-    return await uiSearchConversation(sess);
+    return await uiSearchConversation(sess, strict);
   }
   // 深度查询：覆盖 Shadow DOM（阿里 IM 的搜索框可能挂在自定义组件里）
   function uiRoots() {
@@ -3288,7 +3399,7 @@
     }
     return best;
   }
-  async function uiSearchConversation(sess) {
+  async function uiSearchConversation(sess, strict) {
     const search = await uiOpenSearch();
     if (!search) {
       const near = uiDeepQuery('div, span, button, a')
@@ -3299,23 +3410,25 @@
       console.warn('[ali-export-ext] 没找到搜索入口，左侧可见文本：', near);
       return null;
     }
+    // 占位值和过短的值（如 NA）不拿去搜索，否则会搜出一堆无关客户
     const keys = [sess && sess.name, sess && sess.ct && sess.ct.loginId, sess && sess.ct && sess.ct.accountId]
-      .filter(Boolean).map(String);
+      .concat((sess && sess.aliases) || [])
+      .map((k) => uiKeyOf(k, 3)).filter(Boolean);
     for (const k of keys) {
       uiSetText(search, '');
       await uiWait(300);
       uiSetText(search, k);
       // 搜索结果多是异步返回的：轮询最多约 4 秒，不要只看一眼
       let item = null;
-      for (let i = 0; i < 10 && !item; i++) { await uiWait(400); item = uiFindConversation(sess); }
+      for (let i = 0; i < 10 && !item; i++) { await uiWait(400); item = uiFindConversation(sess, strict); }
       if (item) return item;
       uiPressEnter(search);
-      for (let i = 0; i < 8 && !item; i++) { await uiWait(400); item = uiFindConversation(sess); }
+      for (let i = 0; i < 8 && !item; i++) { await uiWait(400); item = uiFindConversation(sess, strict); }
       if (item) return item;
       const sb = uiFindSearchButton(search);
       if (sb) {
         uiClick(sb);
-        for (let i = 0; i < 8 && !item; i++) { await uiWait(400); item = uiFindConversation(sess); }
+        for (let i = 0; i < 8 && !item; i++) { await uiWait(400); item = uiFindConversation(sess, strict); }
       }
       if (item) return item;
     }
@@ -3420,13 +3533,20 @@
     try { el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' })); } catch (e) { el.dispatchEvent(new Event('input', { bubbles: true })); }
     return true;
   }
-  async function uiFillAndSend(composer, text) {
+  async function uiFillAndSend(composer, text, guard) {
     uiSetText(composer, text);
     await uiWait(250);
     const getVal = () => String(composer.value !== undefined ? composer.value : uiText(composer));
     const head = text.slice(0, 12);
     // 发送前确认输入框里确实是这段文字，避免发错会话
     if (getVal().indexOf(head) < 0) throw new Error('输入框内容校验失败，已取消发送');
+    // 发送前再核对一次会话身份：切换未完成时输入框可能还连着上一个客户
+    if (guard && !guard()) {
+      try { uiSetText(composer, ''); } catch (e) { /* ignore */ }
+      const err = new Error('聊天窗口尚未切换到目标客户，已取消发送');
+      err.code = 'session_mismatch';
+      throw err;
+    }
     const btn = uiFindSendButton(composer);
     if (btn) uiClick(btn); else uiPressEnter(composer);
     await uiWait(700);
@@ -3476,39 +3596,52 @@
     });
     return out.slice(0, limit || 40);
   }
+  // 聊天窗口（weblitePWA）的会话身份：左侧选中项 + 聊天区标题
+  const uiPwaNorm = (s) => uiNormText(s);
+  function uiPwaHit(sess) {
+    const nkeys = [sess && sess.name, sess && sess.ct && sess.ct.loginId, sess && sess.ct && sess.ct.accountId]
+      .concat((sess && sess.aliases) || [])
+      .map((k) => uiKeyOf(k, 3)).filter(Boolean);
+    // 只认完整姓名/登录名/公司，不做「前缀相近」匹配，避免把相似名字当成本人
+    return (txt) => {
+      const n = uiNormText(txt);
+      return !!n && nkeys.some((k) => n.indexOf(k) >= 0);
+    };
+  }
+  function uiPwaSelectedText() {
+    let t = '';
+    try { t = uiText(document.querySelector('.contact-item-container.selected')); } catch (e) { t = ''; }
+    return t;
+  }
+  function uiPwaHeaderText() {
+    let t = '';
+    allDocs().forEach((d) => {
+      let els = [];
+      try {
+        els = Array.from(d.querySelectorAll('[class*="chat-header"], [class*="conversation-header"], [class*="chat-title"], [class*="session-header"], [class*="contact-info"]'));
+      } catch (e) { return; }
+      els.forEach((el) => { if (!uiInOurPanel(el)) t += ' ' + uiText(el); });
+    });
+    return t;
+  }
+  // 发送前确认当前聊天窗口就是目标客户：
+  // 聊天区标题优先——左侧选中项会在切换开始时立刻变化，但聊天区可能还停留在上一个客户。
+  function uiPwaOnTarget(sess) {
+    const hit = uiPwaHit(sess);
+    const hd = uiPwaHeaderText();
+    if (hd.trim()) return hit(hd);
+    return hit(uiPwaSelectedText());
+  }
+  // 平台完全没有会话身份标记时才放行；有任何身份标记但对不上，一律不发送
+  function uiPwaVerified(sess) {
+    if (uiPwaOnTarget(sess)) return true;
+    return !uiPwaHeaderText().trim() && !uiPwaSelectedText().trim();
+  }
   // 在聊天窗口（weblitePWA）切到目标客户，返回可用的输入框
-  // 校验做了三重兜底：左侧选中项 → 聊天区标题 → 平台没有选中态时按定位结果继续
   async function uiSelectSessionPwa(sess) {
     const name = String((sess && sess.name) || '').trim();
-    const keys = [name, sess && sess.ct && sess.ct.loginId].filter(Boolean).map(String);
-    const norm = (s) => String(s || '').replace(/\s+/g, '').toLowerCase();
-    const nkeys = keys.map(norm).filter(Boolean);
-    const hit = (txt) => {
-      const n = norm(txt);
-      if (!n) return false;
-      if (nkeys.some((k) => n.indexOf(k) >= 0)) return true;
-      // 列表里名字可能被截断：前 6 个字符能对上就认
-      const head = norm(name).slice(0, 6);
-      return head.length >= 4 && n.indexOf(head) >= 0;
-    };
-    const selectedText = () => {
-      let t = '';
-      try { t = uiText(document.querySelector('.contact-item-container.selected')); } catch (e) { t = ''; }
-      return t;
-    };
-    const headerText = () => {
-      let t = '';
-      allDocs().forEach((d) => {
-        let els = [];
-        try {
-          els = Array.from(d.querySelectorAll('[class*="chat-header"], [class*="conversation-header"], [class*="chat-title"], [class*="session-header"], [class*="contact-info"]'));
-        } catch (e) { return; }
-        els.forEach((el) => { if (!uiInOurPanel(el)) t += ' ' + uiText(el); });
-      });
-      return t;
-    };
-
-    const item = await uiRevealConversation(sess);
+    const hit = uiPwaHit(sess);
+    const item = await uiRevealConversation(sess, true); // 发送只认严格匹配，绝不找相近名字
     if (!item) {
       const cur = curAcctId();
       const own = String((sess && sess.acct && sess.acct.accountId) || '');
@@ -3517,18 +3650,18 @@
         : '';
       const seen = uiContactTexts(12).join(' / ') || '（左侧列表未渲染任何会话项）';
       console.warn('[ali-export-ext] 找不到会话', { want: name, loginId: sess && sess.ct && sess.ct.loginId, curAcct: cur, ownAcct: own, visible: uiContactTexts(40) });
-      throw new Error('页面里找不到会话「' + name + '」' + acctHint + '。左侧当前可见：' + seen + '（已打印到 F12 Console，点「诊断」可复制完整结构）');
+      const err = new Error('找不到客户「' + name + '」的聊天会话，已停止发送（不会发给名字相近的客户）' + acctHint + '。左侧当前可见：' + seen);
+      err.code = 'session_not_found';
+      throw err;
     }
     uiClick(item);
 
     for (let i = 0; i < 14; i++) {
       await uiWait(450);
-      const st = selectedText();
-      if (hit(st)) {
-        const c = await uiWakeComposer();
-        if (c) return c;
-      }
-      if (hit(headerText())) {
+      const hd = uiPwaHeaderText();
+      const st = uiPwaSelectedText();
+      // 标题有内容时只认标题：避免“列表已选中、聊天区还是上一个客户”时发错人
+      if (hd.trim() ? hit(hd) : hit(st)) {
         const c = await uiWakeComposer();
         if (c) return c;
       }
@@ -3537,9 +3670,12 @@
     }
 
     const composer = await uiWakeComposer();
-    if (composer && !selectedText()) return composer; // 平台没有 selected 标记：按已定位的会话继续
-    console.warn('[ali-export-ext] 会话校验未通过', { want: name, selected: selectedText(), header: headerText().slice(0, 120) });
-    throw new Error('当前聊天窗口是「' + (selectedText().slice(0, 40) || '未知') + '」，不是「' + name + '」：已自动重试点击，请手动点开该客户后再试');
+    if (composer && uiPwaVerified(sess)) return composer;
+    const now = (uiPwaHeaderText() || uiPwaSelectedText()).trim().slice(0, 40) || '未知';
+    console.warn('[ali-export-ext] 会话校验未通过', { want: name, selected: uiPwaSelectedText(), header: uiPwaHeaderText().slice(0, 120) });
+    const err = new Error('当前聊天窗口识别为「' + now + '」，不是「' + name + '」：为防发错客户已取消发送，请手动点开该客户后再试');
+    err.code = 'session_mismatch';
+    throw err;
   }
   // 找聊天窗口的图片上传入口（多数是隐藏的 input[type=file]）
   function uiFindImageInput() {
@@ -3624,11 +3760,15 @@
     // 单聊窗口（weblitePWA）：有完整会话列表，优先切到目标客户
     if (/weblitePWA/i.test(location.pathname)) {
       const composer = await uiSelectSessionPwa(sess);
-      return uiFillAndSend(composer, text);
+      return uiFillAndSend(composer, text, () => uiPwaVerified(sess));
     }
-    // 消息管理器列表页：先定位会话，再打开聊天框
-    const item = await uiRevealConversation(sess);
-    if (!item) throw new Error('页面里找不到会话「' + name + '」：请先在消息管理器点开该客户，进入聊天窗口后再试');
+    // 消息管理器列表页：先定位会话，再打开聊天框（只认严格匹配）
+    const item = await uiRevealConversation(sess, true);
+    if (!item) {
+      const err = new Error('找不到客户「' + name + '」的聊天会话，已停止发送（不会发给名字相近的客户）：请先在消息管理器点开该客户，进入聊天窗口后再试');
+      err.code = 'session_not_found';
+      throw err;
+    }
     let composer = await uiWakeComposer();
     if (!composer) { uiClick(item); await uiWait(800); composer = await uiWakeComposer(); }
     if (!composer) { uiDoubleClick(item); await uiWait(800); composer = await uiWakeComposer(); }
@@ -3836,11 +3976,11 @@
     try {
       await uiSendTo({ name: p.customer, ct: { loginId: p.loginId } }, p.text);
       if (!p.test) {
-        const log = await loadFinishedLog();
+        const log = await loadDentureLog();
         const key = String(p.loginId || p.customer);
         log.count += 1;
         log.customers[key] = String(Date.now());
-        await saveFinishedLog(log);
+        await saveDentureLog(log);
       }
       await chrome.storage.local.remove(PENDING_SEND_KEY);
       toast('已自动发送婉拒给 ' + p.customer);
@@ -3922,20 +4062,26 @@
     console.log('[ali-export-ext][UI-DIAG]', out);
     return out;
   }
-  async function loadFinishedLog() {
+  async function loadDentureLog() {
     let o = null;
-    try { const r = await chrome.storage.local.get(FINISHED_LOG_KEY); o = r && r[FINISHED_LOG_KEY]; } catch (e) { /* ignore */ }
+    try { const r = await chrome.storage.local.get(DENTURE_LOG_KEY); o = r && r[DENTURE_LOG_KEY]; } catch (e) { /* ignore */ }
     if (!o || o.date !== dayKey()) o = { date: dayKey(), count: 0, customers: {} };
     return o;
   }
-  async function saveFinishedLog(o) {
-    try { await chrome.storage.local.set({ [FINISHED_LOG_KEY]: o }); } catch (e) { /* ignore */ }
+  async function saveDentureLog(o) {
+    try { await chrome.storage.local.set({ [DENTURE_LOG_KEY]: o }); } catch (e) { /* ignore */ }
   }
 
-  async function openFinishedReply(startDate, endDate) {
+  async function openDentureReply(startDate, endDate) {
     closeFeaturePanels('ali-dt-box'); // 先关掉 AI 分析/设置面板，避免互相遮挡
     const old = document.getElementById('ali-dt-box');
-    if (old) { old.remove(); return; }
+    if (old) {
+      // 用户主动关闭：先停止发送，再保存客户、话术、勾选与结果，下次打开恢复
+      if (old.__dtStop) old.__dtStop();
+      if (old.__dtSave) old.__dtSave();
+      old.remove();
+      return;
+    }
     const cfg = await loadAiCfg();
     if (!cfg || !cfg.baseUrl || !cfg.apiKey || !cfg.model) { toast('请先点「AI 设置」配置模型', true); return; }
     const box = document.createElement('div');
@@ -3946,7 +4092,7 @@
     const btnS = 'border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:12px;white-space:nowrap;';
     box.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #f0f0f0;">'
-      + '<b style="white-space:nowrap;">成品需求 · 婉拒回复</b>'
+      + '<b style="white-space:nowrap;">假牙客户 · 婉拒回复</b>'
       + '<span id="ali-dt-prog" style="color:#6b7280;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">准备中…</span>'
       + '<span style="flex:1"></span>'
       + '<button id="ali-dt-recollect" style="' + btnS + '">重新采集</button>'
@@ -3971,8 +4117,11 @@
     let probeArmed = false;
     let uiConfirmed = false; // 页面模拟发送的二次确认只弹一次
     let testMode = false; // 测试模式：跳过每客户每日去重与全局上限
+    const draft = DT_DRAFT; // 关闭后重开：恢复客户、话术、勾选与发送结果
+    DT_DRAFT = null;
 
     const setBtns = () => {
+      if (!document.getElementById('ali-dt-box')) return;
       $('ali-dt-recollect').disabled = busy;
       $('ali-dt-analyze').disabled = busy || !items.length;
       $('ali-dt-sendall').disabled = busy || !items.length;
@@ -3982,7 +4131,7 @@
     let onlyMismatch = false;
     const catOf = (it) => (it && it.ai && it.ai.category) || '';
     const renderStats = () => {
-      const mis = items.filter((x) => catOf(x) === 'mismatch_finished').length;
+      const mis = items.filter((x) => catOf(x) === 'mismatch_denture').length;
       const tgt = items.filter((x) => catOf(x) === 'target').length;
       const unc = items.filter((x) => catOf(x) === 'unclear').length;
       const sent = items.filter((x) => x.status === 'sent').length;
@@ -3997,7 +4146,7 @@
     const catBadge = (it) => {
       const c = catOf(it);
       if (c === 'target') return '<span style="background:#ecfdf5;color:#047857;border-radius:10px;padding:1px 8px;font-size:11px;">目标客户 · 不婉拒</span>';
-      if (c === 'mismatch_finished') return '<span style="background:#fef2f2;color:#b91c1c;border-radius:10px;padding:1px 8px;font-size:11px;">待婉拒</span>';
+      if (c === 'mismatch_denture') return '<span style="background:#fef2f2;color:#b91c1c;border-radius:10px;padding:1px 8px;font-size:11px;">待婉拒</span>';
       if (c === 'unclear') return '<span style="background:#f3f4f6;color:#6b7280;border-radius:10px;padding:1px 8px;font-size:11px;">待确认</span>';
       return '<span style="background:#f3f4f6;color:#9ca3af;border-radius:10px;padding:1px 8px;font-size:11px;">分析中</span>';
     };
@@ -4007,19 +4156,20 @@
       return '<span style="background:' + x[1] + ';color:' + x[2] + ';border-radius:10px;padding:1px 8px;font-size:11px;">' + x[0] + '</span>';
     };
     const render = () => {
+      if (!document.getElementById('ali-dt-box')) return;
       if (!items.length) {
-        list.innerHTML = '<div style="padding:24px;color:#9ca3af;text-align:center;">没有命中「成品 / 整机」关键词的会话</div>';
+        list.innerHTML = '<div style="padding:24px;color:#9ca3af;text-align:center;">没有命中「假牙 / 义齿」关键词的会话</div>';
         renderStats(); setBtns(); return;
       }
       const shown = items.map((it, i) => ({ it, i }))
-        .filter((x) => !onlyMismatch || catOf(x.it) === 'mismatch_finished');
+        .filter((x) => !onlyMismatch || catOf(x.it) === 'mismatch_denture');
       if (!shown.length) {
         list.innerHTML = '<div style="padding:24px;color:#9ca3af;text-align:center;">当前没有「待婉拒」的会话</div>';
         renderStats(); setBtns(); return;
       }
       list.innerHTML = shown.map(({ it, i }) => {
         const a = it.ai || {};
-        const canDecline = catOf(it) === 'mismatch_finished';
+        const canDecline = catOf(it) === 'mismatch_denture';
         const lb = (function () { for (let k = it.sess.msgs.length - 1; k >= 0; k--) { const m = it.sess.msgs[k]; if (!m.mine && !isChatNoise(m.c)) return m; } return null; })();
         return '<div data-i="' + i + '" style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;margin-bottom:10px;">'
           + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;">'
@@ -4060,7 +4210,7 @@
     const sendOne = async (i) => {
       const it = items[i];
       if (!it || busy) return;
-      if (catOf(it) !== 'mismatch_finished') { toast('该会话不是成品需求买家，不发送婉拒', true); return; }
+      if (catOf(it) !== 'mismatch_denture') { toast('该会话不是成品假牙买家，不发送婉拒', true); return; }
       const tpl = await loadSendApi();
       const useUI = !tpl || tpl.via === 'ws';
       const txt = String(it.reply || '').trim();
@@ -4070,7 +4220,7 @@
         if (!ok) return;
         uiConfirmed = true;
       }
-      const log = await loadFinishedLog();
+      const log = await loadDentureLog();
       const key = String(it.sess.ct.accountId || it.sess.name);
       if (!testMode) {
         if (log.count >= SEND_MAX_PER_DAY) { toast('今日已达上限 ' + SEND_MAX_PER_DAY + ' 条', true); return; }
@@ -4078,8 +4228,8 @@
       }
       // 在消息管理器列表页：先记下待发送，再点击客户打开聊天窗口；窗口加载后自动发送
       if (useUI && !/weblitePWA/i.test(location.pathname)) {
-        const item = await uiRevealConversation(it.sess);
-        if (!item) { toast('左侧列表找不到该客户，请先手动点开一次', true); return; }
+        const item = await uiRevealConversation(it.sess, true); // 严格匹配，避免点开相近名字的客户
+        if (!item) { toast('找不到客户「' + it.sess.name + '」的会话，已停止发送（不会发给相近名字的客户）', true); return; }
         try {
           await chrome.storage.local.set({ [PENDING_SEND_KEY]: {
             customer: it.sess.name,
@@ -4097,28 +4247,29 @@
         return;
       }
       busy = true; setBtns(); it.status = 'sending'; render();
+      holdUpdate(true); // 发送期间不自动重载扩展
       try {
         if (useUI) await uiSendTo(it.sess, txt);
         else await sendMessageNow(tpl, txt);
         if (!testMode) {
           log.count += 1; log.customers[key] = String(lastBuyerTs(it.sess));
-          await saveFinishedLog(log);
+          await saveDentureLog(log);
         }
         it.status = 'sent'; it.err = '';
         toast('已发送给 ' + it.sess.name);
       } catch (e) {
         it.status = 'error'; it.err = '发送失败：' + e.message;
         toast('发送失败：' + e.message, true);
-      } finally { busy = false; render(); }
+      } finally { busy = false; holdUpdate(false); render(); }
     };
     const regenOne = async (i) => {
       const it = items[i];
       if (!it || busy) return;
       busy = true; setBtns();
       try {
-        it.ai = await analyzeFinished(it.sess, cfg);
+        it.ai = await analyzeDenture(it.sess, cfg);
         it.reply = it.ai.reply || '';
-        it.status = (it.ai.category === 'mismatch_finished' && it.ai.need_reply !== false) ? 'pending' : 'skip';
+        it.status = (it.ai.category === 'mismatch_denture' && it.ai.need_reply !== false) ? 'pending' : 'skip';
         it.err = '';
       } catch (e) { toast('重新判断失败：' + e.message, true); }
       finally { busy = false; render(); }
@@ -4131,9 +4282,9 @@
         if (it.ai) continue;
         prog('AI 分析 ' + (i + 1) + '/' + items.length + '：' + it.sess.name);
         try {
-          it.ai = await analyzeFinished(it.sess, cfg);
+          it.ai = await analyzeDenture(it.sess, cfg);
           it.reply = it.ai.reply || '';
-          it.status = (it.ai.category === 'mismatch_finished' && it.ai.need_reply !== false) ? 'pending' : 'skip';
+          it.status = (it.ai.category === 'mismatch_denture' && it.ai.need_reply !== false) ? 'pending' : 'skip';
         } catch (e) {
           it.ai = { reason: '分析失败：' + e.message };
           it.status = 'error'; it.err = '分析失败：' + e.message;
@@ -4148,7 +4299,7 @@
       busy = true; stopped = false; items = []; render();
       try {
         const all = await collectChatSessions(startDate, endDate, (d) => prog('已取 ' + d + ' 个会话…'));
-        items = all.map((s) => ({ sess: s, hit: finishedHit(s), ai: null, reply: '', status: 'pending', err: '' }))
+        items = all.map((s) => ({ sess: s, hit: dentureHit(s), ai: null, reply: '', status: 'pending', err: '' }))
           .filter((x) => x.hit.buyer > 0 || x.hit.score >= 2);
         prog('命中 ' + items.length + ' / ' + all.length + ' 个会话，开始分析…');
         render();
@@ -4162,6 +4313,7 @@
     const sendAll = async () => {
       if (busy) return;
       stopped = false;
+      holdUpdate(true); // 批量发送期间不自动重载扩展
       for (let i = 0; i < items.length; i++) {
         if (stopped) break;
         const it = items[i];
@@ -4173,6 +4325,7 @@
         prog('已发送，等待 ' + Math.round(gap / 1000) + ' 秒…');
         await new Promise((r) => setTimeout(r, gap));
       }
+      holdUpdate(false);
       prog(stopped ? '已停止' : '批量发送结束');
     };
     // 自动测试：一次点击，按顺序自动发送多个待婉拒客户，记录成功/失败
@@ -4182,7 +4335,7 @@
         toast('请先进入聊天窗口（weblitePWA）再执行自动测试', true);
         return;
       }
-      const pool = items.filter((it) => catOf(it) === 'mismatch_finished' && String(it.reply || '').trim());
+      const pool = items.filter((it) => catOf(it) === 'mismatch_denture' && String(it.reply || '').trim());
       if (!pool.length) { toast('没有可测试的待婉拒客户', true); return; }
       const raw = window.prompt('自动测试：要发送的客户数（最多 ' + pool.length + '）', String(Math.min(pool.length, 3)));
       if (raw === null) return;
@@ -4193,6 +4346,7 @@
       testMode = true;
       stopped = false;
       busy = true; setBtns();
+      holdUpdate(true); // 自动测试期间不自动重载扩展
       let success = 0, fail = 0;
       const list = pool.slice(0, n);
       for (let i = 0; i < list.length; i++) {
@@ -4210,7 +4364,9 @@
         if (i < list.length - 1 && !stopped) await uiWait(3000);
       }
       testMode = prevTest;
-      busy = false; render();
+      busy = false;
+      holdUpdate(false);
+      render();
       const msg = '自动测试完成：成功 ' + success + ' / 失败 ' + fail;
       prog(msg);
       toast(msg, fail > 0);
@@ -4257,7 +4413,20 @@
       toast('发送接口已保存');
     };
 
-    $('ali-dt-close').onclick = () => { stopped = true; box.remove(); };
+    // 关闭面板后恢复：客户、话术、勾选与发送结果都保留在内存里
+    const saveDraft = () => {
+      if (!document.getElementById('ali-dt-box')) return;
+      DT_DRAFT = {
+        range: [startDate || '', endDate || ''],
+        items: items.slice(),
+        onlyMismatch,
+        testMode,
+        prog: $('ali-dt-prog').textContent,
+      };
+    };
+    box.__dtSave = saveDraft;
+    box.__dtStop = () => { stopped = true; };
+    $('ali-dt-close').onclick = () => { stopped = true; saveDraft(); box.remove(); };
     $('ali-dt-stop').onclick = () => { stopped = true; prog('停止中…'); };
     $('ali-dt-recollect').onclick = () => { if (!busy) collect(); };
     $('ali-dt-analyze').onclick = () => { if (!busy) analyzeAll(); };
@@ -4279,7 +4448,18 @@
       : '未配置发送接口：发送时自动走「页面模拟」')
       + (onChatWin ? '｜当前在聊天窗口，可直接发送'
         : '｜当前不是聊天窗口：请先在消息管理器点开客户，进入聊天窗口后再发送');
-    await collect();
+    const sameRange = !!(draft && draft.range
+      && draft.range[0] === (startDate || '') && draft.range[1] === (endDate || ''));
+    if (sameRange) {
+      // 关闭后重开：直接恢复上次的客户、话术与发送结果，不重新采集
+      items = (draft.items || []).slice();
+      onlyMismatch = !!draft.onlyMismatch;
+      testMode = !!draft.testMode;
+      render();
+      if (draft.prog) prog(draft.prog);
+    } else {
+      await collect();
+    }
   }
 
   // ---------------- 展会通知 · 站内群发 ----------------
@@ -4348,21 +4528,30 @@
   async function saveExpoLog(o) {
     try { await chrome.storage.local.set({ [EXPO_LOG_KEY]: o }); } catch (e) { /* ignore */ }
   }
-  // 模板变量：{name} 客户名、{first_name} 名、{loginId} 登录名
+  // 模板变量：{name} 客户名、{first_name} 名、{loginId} 登录名、{company} 公司、{country} 国家
   function renderExpoText(tpl, sess) {
-    const name = String((sess && sess.name) || '').trim();
+    const name = String((sess && (sess.contactName || sess.name)) || '').trim();
+    const crm = (sess && sess.crm) || {};
     const vars = {
       name: name,
       first_name: name.split(/\s+/)[0] || name,
       loginId: String((sess && sess.ct && sess.ct.loginId) || ''),
+      company: String(crm.company || ''),
+      country: String(crm.country || ''),
     };
-    return String(tpl || '').replace(/\{(name|first_name|loginId)\}/g, (m, k) => vars[k] || '');
+    return String(tpl || '').replace(/\{(name|first_name|loginId|company|country)\}/g, (m, k) => vars[k] || '');
   }
 
   async function openExpoBroadcast(startDate, endDate) {
     closeFeaturePanels('ali-expo-box');
     const old = document.getElementById('ali-expo-box');
-    if (old) { old.remove(); return; }
+    if (old) {
+      // 用户主动关闭：先停止发送，再保存文案、图片、国家、勾选与结果，下次打开恢复
+      if (old.__expoStop) old.__expoStop();
+      if (old.__expoSave) old.__expoSave();
+      old.remove();
+      return;
+    }
     const box = document.createElement('div');
     box.id = 'ali-expo-box';
     box.style.cssText = 'position:fixed;right:16px;top:48px;z-index:2147483002;width:min(820px,96vw);height:min(800px,92vh);'
@@ -4372,9 +4561,10 @@
     box.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #f0f0f0;">'
       + '<b style="white-space:nowrap;">展会通知 · 站内群发</b>'
+      + '<span style="color:#9ca3af;font-size:11px;white-space:nowrap;">v' + VERSION + '</span>'
       + '<span id="ali-expo-prog" style="color:#6b7280;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">未采集</span>'
       + '<span style="flex:1"></span>'
-      + '<button id="ali-expo-collect" style="' + btnS + '">采集客户</button>'
+      + '<button id="ali-expo-collect" style="' + btnS + '">加载客户</button>'
       + '<button id="ali-expo-preview" style="' + btnS + '" disabled>预览</button>'
       + '<button id="ali-expo-send" style="border:0;background:#2563eb;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer;font-size:12px;white-space:nowrap;">发送选中</button>'
       + '<button id="ali-expo-stop" style="' + btnS + '" disabled>停止</button>'
@@ -4382,8 +4572,15 @@
       + '<button id="ali-expo-fails" style="' + btnS + '">失败明细</button>'
       + '<button id="ali-expo-diag" style="' + btnS + '">诊断</button>'
       + '<button id="ali-expo-close" style="border:0;background:#f3f4f6;border-radius:6px;padding:4px 9px;cursor:pointer;">关闭</button></div>'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px 6px;border-bottom:1px solid #f7f7f7;flex-wrap:wrap;">'
+      + '<label style="color:#374151;">国家/地区 <select id="ali-expo-country" style="padding:3px 6px;border:1px solid #d1d5db;border-radius:6px;max-width:260px;font-size:12px;">'
+      + '<option value="">加载中…</option></select></label>'
+      + '<label style="color:#374151;cursor:pointer;"><input id="ali-expo-mine" type="checkbox"> 仅我的客户</label>'
+      + '<button id="ali-expo-collect-chat" style="' + btnS + 'color:#6b7280;">按会话采集（旧）</button>'
+      + '<span id="ali-expo-source-hint" style="color:#6b7280;font-size:11px;">客户来自客户库，不读取聊天记录</span>'
+      + '</div>'
       + '<div style="padding:8px 12px 6px;border-bottom:1px solid #f7f7f7;">'
-      + '<textarea id="ali-expo-tpl" placeholder="粘贴展会通知文案，可用变量：{name} 客户名、{first_name} 名、{loginId} 登录名" '
+      + '<textarea id="ali-expo-tpl" placeholder="粘贴展会通知文案，可用变量：{name} 客户名、{first_name} 名、{loginId} 登录名、{company} 公司、{country} 国家" '
       + 'style="width:100%;min-height:96px;padding:8px;border:1px solid #d1d5db;border-radius:8px;font:12.5px/1.6 inherit;resize:vertical;box-sizing:border-box;"></textarea>'
       + '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:#6b7280;flex-wrap:wrap;">'
       + '<label style="cursor:pointer;border:1px solid #d1d5db;border-radius:6px;padding:3px 9px;background:#fff;">添加图片'
@@ -4412,6 +4609,32 @@
     const prog = (t) => { const el = $('ali-expo-prog'); if (el) el.textContent = t; };
 
     let items = [];       // { sess, checked, status, err }
+    let countries = [];
+    const draft = EXPO_DRAFT;
+    const askExpoCustomers = (country, countriesOnly) => new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        type: 'expoCustomers', country: String(country || ''),
+        mineOnly: !!($('ali-expo-mine') && $('ali-expo-mine').checked),
+        countriesOnly: !!countriesOnly,
+      }, (r) => {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!r || !r.ok) return reject(new Error((r && r.error) || '客户库不可用'));
+        resolve(r.result);
+      });
+    });
+    const initCountries = async () => {
+      try {
+        prog('加载国家列表…');
+        const r = await askExpoCustomers('', true);
+        countries = r.countries || [];
+        const sel = $('ali-expo-country');
+        sel.innerHTML = '<option value="">全部国家（' + r.totalProfiles + ' 位客户）</option>'
+          + countries.map((c) => '<option value="' + escHtml(c.key) + '">' + escHtml(c.label) + '（' + c.count + '）</option>').join('');
+        prog('选择国家后点「加载客户」');
+      } catch (e) {
+        prog('客户库不可用：' + e.message);
+      }
+    };
     let busy = false;
     let stopped = false;
     let log = await loadExpoLog();
@@ -4457,9 +4680,36 @@
       });
     };
 
+    // 关闭面板后恢复：文案、图片、国家、勾选、发送结果都保留在内存里
+    if (draft) {
+      $('ali-expo-tpl').value = draft.template || '';
+      media = (draft.images || []).slice();
+      renderMedia();
+      $('ali-expo-mine').checked = !!draft.mineOnly;
+      $('ali-expo-imgfirst').checked = !!draft.imgFirst;
+      $('ali-expo-allowdup').checked = !!draft.allowDup;
+      items = (draft.items || []).slice();
+    }
+    const saveDraft = () => {
+      EXPO_DRAFT = {
+        template: $('ali-expo-tpl').value,
+        images: media.slice(),
+        country: $('ali-expo-country').value,
+        mineOnly: $('ali-expo-mine').checked,
+        imgFirst: $('ali-expo-imgfirst').checked,
+        allowDup: $('ali-expo-allowdup').checked,
+        items: items.slice(),
+        prog: $('ali-expo-prog').textContent,
+      };
+    };
+    box.__expoSave = saveDraft;
+    box.__expoStop = () => { stopped = true; };
+
     const limitNow = () => readCfg().limit;
     const setBtns = () => {
+      if (!document.getElementById('ali-expo-box')) return;
       $('ali-expo-collect').disabled = busy;
+      $('ali-expo-collect-chat').disabled = busy;
       $('ali-expo-send').disabled = busy || !items.length;
       $('ali-expo-preview').disabled = busy || !items.length;
       $('ali-expo-stop').disabled = !busy;
@@ -4495,13 +4745,31 @@
       return '<span style="background:' + x[1] + ';color:' + x[2] + ';border-radius:10px;padding:1px 8px;font-size:11px;">' + x[0] + '</span>';
     };
     const render = () => {
+      if (!document.getElementById('ali-expo-box')) return;
       if (!items.length) {
-        list.innerHTML = '<div style="padding:24px;color:#9ca3af;text-align:center;">点「采集客户」拉取该时间段内有聊天往来的客户</div>';
+        list.innerHTML = '<div style="padding:24px;color:#9ca3af;text-align:center;">选择国家后点「加载客户」；客户来自客户库，不读取聊天记录</div>';
         stats(); setBtns(); return;
       }
       list.innerHTML = items.map((it, i) => {
         const s = it.sess;
         const doneTs = log.sent[expoKeyOf(s)];
+        if (s.crm) {
+          const c = s.crm;
+          return '<div data-i="' + i + '" style="display:flex;gap:8px;align-items:flex-start;background:#fff;border:1px solid #e5e7eb;'
+            + 'border-radius:10px;padding:8px 10px;margin-bottom:8px;' + (it.checked ? '' : 'opacity:.6;') + '">'
+            + '<input type="checkbox" data-check="' + i + '"' + (it.checked ? ' checked' : '') + ' style="margin-top:3px;">'
+            + '<div style="flex:1;min-width:0;">'
+            + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap;">'
+            + '<b>' + escHtml(c.name || s.name) + '</b>'
+            + (c.company && c.company !== c.name ? '<span style="color:#6b7280;font-size:11px;">' + escHtml(c.company) + '</span>' : '')
+            + '<span style="color:#6b7280;font-size:11px;">' + escHtml(c.country || '') + '</span>'
+            + (c.hot ? '<span style="background:#eef2ff;color:#4338ca;border-radius:10px;padding:1px 7px;font-size:11px;">高价值</span>' : '')
+            + '<span style="flex:1"></span>' + (doneTs ? '<span style="color:#047857;font-size:11px;" title="今天发送过；勾选后仍可重发，相同文案需勾选「允许重发相同内容」">今日已发</span> ' : '') + badge(it.status) + '</div>'
+            + '<div style="color:#4b5563;font-size:12px;margin-top:2px;">'
+            + escHtml(c.email || '无邮箱') + ' · ' + escHtml(c.phone || '无电话') + ' · ' + escHtml(c.sources || '') + '</div>'
+            + (it.err ? '<div style="color:#b91c1c;font-size:11.5px;">' + escHtml(it.err) + '</div>' : '')
+            + '</div></div>';
+        }
         const cur = curAcctId();
         const acctId = String((s.acct && s.acct.accountId) || '');
         const acctName = String((s.acct && s.acct.name) || acctId || '');
@@ -4521,7 +4789,7 @@
           + (acctName ? '<span style="color:#6b7280;font-size:11px;">子账号：' + escHtml(acctName) + '</span>' : '')
           + (mismatch ? '<button data-switch="' + escHtml(acctId) + '" style="border:1px solid #fcd34d;background:#fffbeb;color:#b45309;'
             + 'border-radius:6px;padding:1px 7px;cursor:pointer;font-size:11px;">切到该子账号</button>' : '')
-          + '<span style="flex:1"></span>' + (doneTs ? '<span style="color:#047857;font-size:11px;">今日已发</span> ' : '') + badge(it.status) + '</div>'
+          + '<span style="flex:1"></span>' + (doneTs ? '<span style="color:#047857;font-size:11px;" title="今天发送过；勾选后仍可重发，相同文案需勾选「允许重发相同内容」">今日已发</span> ' : '') + badge(it.status) + '</div>'
           + '<div style="color:#4b5563;font-size:12px;margin-top:2px;">最近客户消息：' + escHtml(lb ? (lb.t + '｜' + lb.c.slice(0, 120)) : '（无）') + '</div>'
           + (it.err ? '<div style="color:#b91c1c;font-size:11.5px;">' + escHtml(it.err) + '</div>' : '')
           + '</div></div>';
@@ -4547,6 +4815,33 @@
       stats(); setBtns();
     };
 
+    const loadCrm = async () => {
+      if (busy) return;
+      busy = true; stopped = false; items = []; render();
+      try {
+        const r = await askExpoCustomers($('ali-expo-country').value);
+        items = (r.rows || []).map((x) => ({
+          sess: {
+            name: x.name || x.company || x.login || x.customerId || '未命名客户',
+            contactName: x.name || '',
+            // 只用聊天登录名匹配会话；CRM 客户ID 不是聊天账号，混用容易匹配到错误的会话
+            ct: { loginId: x.login || '' },
+            aliases: [x.company, x.login].filter(Boolean),
+            acct: null,
+            msgs: [],
+            crm: x,
+          },
+          // 按国家加载的客户默认勾选，避免“加载了但没选中”造成漏发；
+          // 未勾选的客户会在发送确认和结束提示里明确显示
+          checked: true, status: 'pending', err: '', textDone: false, imgDone: false,
+        }));
+        prog('已加载 ' + items.length + ' 位客户' + (r.missingCountry ? '；另有 ' + r.missingCountry + ' 位未填写国家' : ''));
+      } catch (e) {
+        prog('加载失败：' + e.message);
+      }
+      busy = false; render();
+    };
+
     const collect = async () => {
       busy = true; stopped = false; items = []; render();
       try {
@@ -4567,13 +4862,17 @@
       if (!tpl && !media.length) { toast('请先填写文案或添加图片', true); return; }
       if (!target) { toast('请先勾选至少一个客户', true); return; }
       boxEl.style.display = 'block';
-      boxEl.textContent = '预览（' + target.sess.name + '）：\n'
+      const label = target.sess.crm
+        ? (target.sess.crm.name + (target.sess.crm.company ? ' · ' + target.sess.crm.company : ''))
+        : target.sess.name;
+      boxEl.textContent = '预览（' + label + '）：\n'
         + (tpl ? renderExpoText(tpl, target.sess) : '（不发送文字）')
         + (media.length ? '\n\n[附带图片 ' + media.length + ' 张' + ($('ali-expo-imgfirst').checked ? '，先发图片' : '') + ']' : '');
     };
 
     const sendSelected = async () => {
       if (busy) return;
+      if (EXPO_BUSY) { toast('上一次发送仍在收尾，请稍候再试', true); return; }
       if (!/weblitePWA/i.test(location.pathname)) { toast('请先进入聊天窗口（weblitePWA）再发送', true); return; }
       const tpl = String($('ali-expo-tpl').value || '').trim();
       const files = media.slice();
@@ -4584,8 +4883,9 @@
       const limit = limitNow();
       const remain = limit - log.count;
       if (remain <= 0) { toast('今日已达上限 ' + limit + ' 个客户', true); return; }
-      const pool = checkedItems().filter((it) => !log.sent[expoKeyOf(it.sess)]);
-      if (!pool.length) { toast('选中的客户今天都已发过（或没有勾选）', true); return; }
+      // 「今日已发」只作为提示，不再阻止重发；是否重复交给下面的内容指纹判断
+      const pool = checkedItems();
+      if (!pool.length) { toast('请先勾选要发送的客户', true); return; }
 
       // 内容级去重：同一客户发过同样的「文字+图片」就跳过（跨天生效，避免重复打扰）
       const plan = [];
@@ -4594,6 +4894,8 @@
         const text = tpl ? renderExpoText(tpl, it.sess) : '';
         const hash = expoContentHash(text, files);
         const key = expoKeyOf(it.sess);
+        it.status = 'pending';
+        it.err = '';
         const rec = (hist[key] || []).find((x) => x && x.h === hash);
         if (!allowDup && rec) {
           it.status = 'skip';
@@ -4604,17 +4906,22 @@
         plan.push({ it, text, hash, key });
       }
       render();
-      if (!plan.length) { toast('选中的客户都发过相同内容，已全部跳过', true); return; }
+      if (!plan.length) { toast('选中的客户都发过相同内容，已全部跳过；如需强制重发，请勾选「允许重发相同内容」', true); return; }
+      const resentCount = plan.filter((p) => !!log.sent[p.key]).length;
       const n = Math.min(plan.length, remain);   // 按客户计次：一条任务含文字+图片也只算 1 次
+      const uncheckedCount = items.filter((x) => !x.checked).length;
       const imgFirst = $('ali-expo-imgfirst').checked;
       const c0 = readCfg();
       const ok = window.confirm('将向 ' + n + ' 个客户发送展会通知'
         + (files.length ? '（每条含 ' + files.length + ' 张图片，按' + (imgFirst ? '先图后文' : '先文后图') + '顺序）' : '')
         + '，间隔 ' + c0.gapMin + '–' + c0.gapMax + ' 秒随机，每 5–9 个客户额外休息 30–90 秒，今日剩余可发 ' + remain + ' 个客户。'
+        + (resentCount ? '\n其中 ' + resentCount + ' 位今日已发过，本次将重新发送（消耗今日额度）。' : '')
         + (dupSkipped ? '\n已自动跳过 ' + dupSkipped + ' 个「发过相同内容」的客户。' : '')
+        + (uncheckedCount ? '\n未勾选 ' + uncheckedCount + ' 位客户，本次不会发送。' : '')
         + '\n请确认当前聊天窗口可正常发送，发送期间不要操作页面。继续？');
       if (!ok) return;
-      busy = true; stopped = false; setBtns();
+      busy = true; stopped = false; EXPO_BUSY = true; setBtns();
+      holdUpdate(true); // 发送期间不自动重载扩展
       let success = 0, fail = 0;
       let restIn = 5 + Math.floor(Math.random() * 5);
       for (let i = 0; i < n; i++) {
@@ -4627,6 +4934,11 @@
           const doImg = async () => {
             if (!files.length || it.imgDone) return;
             const c = await uiSelectSessionPwa(it.sess);
+            if (!uiPwaVerified(it.sess)) {
+              const err = new Error('聊天窗口未切到目标客户，已取消图片发送');
+              err.code = 'session_mismatch';
+              throw err;
+            }
             await uiAttachImages(files, c, it.sess);
             it.imgDone = true;
           };
@@ -4645,6 +4957,10 @@
           it.err = (it.textDone || it.imgDone)
             ? '部分已发送（' + (it.textDone ? '文字✓ ' : '') + (it.imgDone ? '图片✓ ' : '') + '），重试只会补没发出去的部分：' + e.message
             : '发送失败：' + e.message;
+          // 找不到客户/会话对不上：立即弹提示，避免员工以为已经发出
+          if (e && (e.code === 'session_not_found' || e.code === 'session_mismatch')) {
+            toast('「' + it.sess.name + '」未发送：' + e.message, true);
+          }
           await appendExpoFail({
             at: new Date().toISOString(),
             name: it.sess.name,
@@ -4672,11 +4988,14 @@
         }
       }
       busy = false;
-      prog(stopped ? ('已停止：成功 ' + success + '，失败 ' + fail) : ('发送结束：成功 ' + success + '，失败 ' + fail));
+      EXPO_BUSY = false;
+      holdUpdate(false);
+      prog((stopped ? ('已停止：成功 ' + success + '，失败 ' + fail) : ('发送结束：成功 ' + success + '，失败 ' + fail))
+        + (uncheckedCount ? '；未勾选 ' + uncheckedCount + ' 位未发送' : ''));
       render();
     };
 
-    $('ali-expo-close').onclick = () => { stopped = true; box.remove(); };
+    $('ali-expo-close').onclick = () => { stopped = true; saveDraft(); box.remove(); };
     $('ali-expo-retry').onclick = () => {
       if (busy) return;
       const bad = items.filter((x) => x.status === 'error');
@@ -4704,7 +5023,10 @@
         .then(() => toast('页面结构已复制，发给开发者可定位「找不到会话」'))
         .catch(() => toast('已打印到 Console（F12）', true));
     };
-    $('ali-expo-collect').onclick = () => { if (!busy) collect(); };
+    $('ali-expo-collect').onclick = () => { if (!busy) loadCrm(); };
+    $('ali-expo-collect-chat').onclick = () => { if (!busy) collect(); };
+    $('ali-expo-country').onchange = () => { if (!busy && $('ali-expo-country').value) loadCrm(); };
+    $('ali-expo-mine').onchange = () => { if (!busy && $('ali-expo-country').value) loadCrm(); };
     $('ali-expo-preview').onclick = () => preview();
     $('ali-expo-send').onclick = () => sendSelected();
     const persistCfg = () => { saveExpoCfg(readCfg()); };
@@ -4727,7 +5049,19 @@
     });
 
     render();
-    await collect();
+    await initCountries();
+    if (draft) {
+      const sel = $('ali-expo-country');
+      sel.value = draft.country || '';
+      if (!items.length && draft.country) {
+        await loadCrm();
+      } else {
+        render();
+      }
+      if (draft.prog) prog(draft.prog);
+    } else {
+      prog('选择国家后点「加载客户」');
+    }
   }
 
   // ---------------- UI ----------------
@@ -4826,7 +5160,7 @@
     { id: 'invview', label: '询盘增强', url: MSG_PAGE, to: '询盘页', date: true, hint: '先采集，再按国家/去重筛选后导出' },
     { id: 'chat', label: '聊天导出', url: CHAT_PAGE, to: '聊天页', date: true, hint: '导出指定时间段的聊天记录' },
     { id: 'aianalysis', label: '聊天分析（AI）', url: CHAT_PAGE, to: '聊天页', date: true, hint: '流式分析该时间段聊天，可实时追问' },
-    { id: 'finishedreply', label: '成品需求 · 婉拒回复', url: CHAT_WIN, to: '聊天窗口', date: true, hint: '执行后会跳到聊天窗口（weblitePWA），到达后再点一次执行' },
+    { id: 'denturereply', label: '假牙客户 · 婉拒回复', url: CHAT_WIN, to: '聊天窗口', date: true, hint: '执行后会跳到聊天窗口（weblitePWA），到达后再点一次执行' },
     { id: 'expo', label: '展会通知 · 群发', url: CHAT_WIN, to: '聊天窗口', date: true, hint: '只发给时间范围内有往来的客户；支持文字+图片，间隔与每日上限可配' },
     { id: 'crmmine', label: '我的客户', url: 'https://i.alibaba.com/hub/alicrm/my_customer', to: '客户管理页', hint: '拉取我的客户全量快照并入库（不按日期筛选）' },
     { id: 'crmpub', label: '公海客户', url: 'https://i.alibaba.com/hub/alicrm/public_customer', to: '公海客户页', hint: '拉取公海客户全量快照并入库（不按日期筛选）' },
@@ -4855,7 +5189,7 @@
       case 'invview': return openInquiryView(start, end, btn);
       case 'chat': return exportChat(start, end, btn);
       case 'aianalysis': return openChatAnalysis(start, end);
-      case 'finishedreply': return openFinishedReply(start, end);
+      case 'denturereply': return openDentureReply(start, end);
       case 'expo': return openExpoBroadcast(start, end);
       case 'crmmine': return exportCustomers(btn, 'mine', start, end, '');
       case 'crmpub': return exportCustomers(btn, 'public', start, end, '');
@@ -4896,7 +5230,7 @@
     invview: { title: '筛选询盘', desc: '按国家筛选、按客户去重后再导出', action: '打开询盘筛选' },
     chat: { title: '聊天记录', desc: '导出所选时间段的客户沟通记录', action: '导出聊天记录' },
     aianalysis: { title: '右侧 AI 客户助手', desc: '边查看客户分析边处理聊天回复', action: '打开右侧模块' },
-    finishedreply: { title: '成品需求筛选', desc: '识别不匹配需求，核对客户后处理回复', action: '查看待处理客户' },
+    denturereply: { title: '假牙需求筛选', desc: '识别不匹配需求，核对客户后处理回复', action: '查看待处理客户' },
     expo: { title: '展会通知', desc: '准备触达名单、文字和图片', action: '准备展会通知' },
     crmmine: { title: '我的客户', desc: '拉取我的客户全量快照并入库', action: '同步客户' },
     crmpub: { title: '公海客户', desc: '拉取公海客户全量快照并入库', action: '同步公海' },
@@ -4927,6 +5261,8 @@
     return 'inquiry';
   };
   let wbSelected = defaultWorkbenchAction();
+  // 工作台收起后恢复：日期范围、上次状态与「配置与排障」展开状态（仅当前页面内存）
+  let WB_DRAFT = null;
 
   function syncQuickState(box) {
     const start = box.querySelector('#ali-start').value;
@@ -4973,7 +5309,7 @@
     const run = box.querySelector('#ali-btn-run');
     if (run) run.textContent = jump ? '前往' + fn.to : ui.action;
     const note = box.querySelector('#ali-run-note');
-    if (note) note.textContent = id === 'expo' || id === 'finishedreply'
+    if (note) note.textContent = id === 'expo' || id === 'denturereply'
       ? '发送前请在下一步核对客户、消息内容和发送范围。'
       : jump ? '切换页面不会自动执行，抵达后需要再确认一次。'
         : needDate ? '默认近 7 天；选择“全部”会处理更多数据，耗时也更长。' : '此操作只影响当前登录账号与本机配置。';
@@ -4999,13 +5335,14 @@
       return `<button type="button" data-fn="${f.id}" class="ali-wb-action" aria-pressed="false">
         <span><strong>${escHtml(ui.title)}</strong><small>${escHtml(ui.desc)}</small></span><span class="ali-wb-arrow" aria-hidden="true">›</span></button>`;
     };
-    const work = ['aianalysis', 'finishedreply', 'expo'].map(fnById);
+    const work = ['aianalysis', 'denturereply', 'expo'].map(fnById);
     const exports = ['inquiry', 'invview', 'chat', 'order', 'crmmine', 'crmpub', 'visitors'].map(fnById);
     const tools = WORKBENCH.filter((f) => f.group === 'tool' && f.id !== 'syncCookie');
     box.innerHTML = `
       <div class="ali-wb-head">
         <span class="ali-wb-mark" aria-hidden="true">贸</span>
         <span class="ali-wb-brand"><strong>外贸助手</strong><small>员工工作台 · v${VERSION}</small></span>
+        <button type="button" id="ali-check-update" title="连接云端检查新版本并更新">检查更新</button>
         <button type="button" id="ali-collapse" aria-label="收起外贸助手">收起</button>
       </div>
       <div class="ali-wb-body">
@@ -5084,6 +5421,31 @@
       box.querySelector('.ali-wb-execute').scrollIntoView({ block: 'nearest' });
     };
     document.getElementById('ali-collapse').onclick = () => collapsePanel();
+    // 版本更新：连接云端检查新版本，调本机更新服务覆盖文件，然后重载扩展
+    document.getElementById('ali-check-update').onclick = async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      if (EXPO_BUSY) { toast('正在发送消息，请发送结束后再更新', true); return; }
+      const label = btn.textContent;
+      btn.disabled = true; btn.textContent = '检查中…';
+      try {
+        const r = await chrome.runtime.sendMessage({ type: 'extensionUpdateCheck' });
+        if (!r || !r.ok) throw new Error((r && r.error) || '检查更新失败');
+        if (!r.update) { toast('当前已是最新版本 v' + r.current); return; }
+        const ok = window.confirm('发现新版本 v' + r.latest + '（当前 v' + r.current + '）。\n\n更新会覆盖扩展文件并自动重载，本机账号、配置和客户库不会丢失。\n请确认现在没有正在发送的消息。\n\n是否立即更新？');
+        if (!ok) return;
+        btn.textContent = '更新中…';
+        const u = await chrome.runtime.sendMessage({ type: 'extensionUpdateApply' });
+        if (!u || !u.ok) throw new Error((u && u.error) || '更新失败');
+        if (!u.updated) { toast('当前已是最新版本 v' + (u.after || r.current)); return; }
+        toast('已更新到 v' + (u.after || r.latest) + '，扩展即将重载…');
+        setTimeout(() => { chrome.runtime.sendMessage({ type: 'extensionUpdateReload' }).catch(() => {}); }, 900);
+      } catch (err) {
+        toast((err && err.message) || '更新失败', true);
+      } finally {
+        btn.disabled = false; btn.textContent = label;
+      }
+    };
     document.getElementById('ali-btn-platform').onclick = () => {
       chrome.runtime.sendMessage({ type: 'openDashboard' }, () => {
         if (chrome.runtime.lastError) toast('打开看板失败：' + chrome.runtime.lastError.message, true);
@@ -5111,7 +5473,7 @@
       if (needJump) { // 不在目标页 → 跳转到该功能对应的页面（落地后再点一次才开始）
         let target = fn.url;
         // 聊天窗口带 activeAccountId / chatToken，优先复用最近一次可用地址
-        if (fn.id === 'finishedreply' || fn.id === 'expo') {
+        if (fn.id === 'denturereply' || fn.id === 'expo') {
           try {
             const key = 'aliLastChatUrl:' + encodeURIComponent(await activeAiWorkspace());
             const o = await chrome.storage.local.get(key);
@@ -5137,8 +5499,21 @@
       finally { btn.disabled = false; selectFn(wbSelected); }
     };
     box.addEventListener('keydown', (e) => { if (e.key === 'Escape') collapsePanel(); });
+    // 收起后重开：恢复日期范围、上次状态与高级区展开状态
+    const saved = WB_DRAFT;
+    WB_DRAFT = null;
+    if (saved) {
+      const si = document.getElementById('ali-start'); const ei = document.getElementById('ali-end');
+      if (si && typeof saved.start === 'string') si.value = saved.start;
+      if (ei && typeof saved.end === 'string') ei.value = saved.end;
+      if (saved.advanced) {
+        const adv = document.getElementById('ali-wb-advanced');
+        if (adv) adv.open = true;
+      }
+    }
     selectFn(wbSelected);
     syncQuickState(box);
+    if (saved && saved.status) setStatus(saved.status);
   }
 
   // 侧边入口（默认只显示这个：logo + 名字，点了才展开完整面板）
@@ -5159,7 +5534,17 @@
   }
   function collapsePanel() {
     const p = document.getElementById('ali-export-panel');
-    if (p) p.remove();
+    if (p) {
+      // 收起时保存日期范围与上次状态，展开后恢复，避免反复选择
+      const si = p.querySelector('#ali-start'); const ei = p.querySelector('#ali-end');
+      WB_DRAFT = {
+        start: si ? si.value : '',
+        end: ei ? ei.value : '',
+        status: (p.querySelector('#ali-status') || {}).textContent || '',
+        advanced: !!(p.querySelector('#ali-wb-advanced') && p.querySelector('#ali-wb-advanced').open),
+      };
+      p.remove();
+    }
     mountDock();
   }
   async function currentAiFocusName() {
@@ -5230,7 +5615,7 @@
     } catch (e) { /* 页面跳转时下次可从工作台手动打开 */ }
   }
   function mountAiSidecarHandle() {
-    if (window.self !== window.top || !['message.alibaba.com', 'onetalk.alibaba.com'].includes(location.hostname)) return;
+    if (window.self !== window.top) return;
     if (document.getElementById('ali-ai-sidecar-handle')) return;
     const handle = document.createElement('button');
     handle.id = 'ali-ai-sidecar-handle';

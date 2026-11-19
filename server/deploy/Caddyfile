@@ -1,0 +1,20 @@
+{$DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy api:8787
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 20MB
+			roll_keep 5
+		}
+		format json
+	}
+}

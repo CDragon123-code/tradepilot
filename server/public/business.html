@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>经营总览 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / 经营总览</div>
+      <h1>经营与运营状态，一屏看清</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>经营结果、转化效率、数据与 AI 状态，统一口径。</h2>
+      <p>这里汇总询盘、客户、订单、成交额、转化漏斗与运营健康度；业务处理仍在扩展里完成。</p>
+      <div class="login-steps"><span>01 看经营结果</span><span>02 看转化漏斗</span><span>03 看运营状态</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">使用员工账号或管理员账号进入。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">经营简报</span><p id="briefing-text">正在汇总经营数据…</p></div>
+      <span id="business-badge" class="quality-badge">汇总中</span>
+    </div>
+
+    <section class="card business-filter">
+      <div class="business-filter-row">
+        <input id="owner-filter" type="search" placeholder="按负责人筛选（可选）" autocomplete="off">
+        <button id="owner-apply" type="button">应用筛选</button>
+        <button id="owner-clear" class="secondary" type="button">查看全部</button>
+        <span id="owner-status" class="business-filter-status">负责人：全部</span>
+      </div>
+      <p class="business-filter-note">指标已区分「近 30 天」与「累计」，避免把累计成交误读为近期业绩。</p>
+    </section>
+
+    <div id="kpis" class="kpis"></div>
+
+    <div class="focus-grid">
+      <section class="card" aria-labelledby="trend-title">
+        <div class="section-head">
+          <div><span class="eyebrow">近 6 个月</span><h2 id="trend-title">询盘与订单趋势</h2></div>
+          <span class="section-note">柱高按各自峰值缩放，数值见柱顶</span>
+        </div>
+        <div class="chart-block">
+          <div class="chart-title">询盘<span id="trend-inquiries-total"></span></div>
+          <div id="trend-inquiries" class="chart-box"></div>
+        </div>
+        <div class="chart-block">
+          <div class="chart-title">已确认订单<span id="trend-orders-total"></span></div>
+          <div id="trend-orders" class="chart-box"></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="funnel-title">
+        <div class="section-head">
+          <div><span class="eyebrow">转化效率</span><h2 id="funnel-title">询盘转化漏斗</h2></div>
+          <span class="section-note">以全部询盘为 100%</span>
+        </div>
+        <div id="funnel" class="funnel-list"></div>
+      </section>
+    </div>
+
+    <div class="focus-grid">
+      <section class="card" aria-labelledby="countries-title">
+        <div class="section-head">
+          <div><span class="eyebrow">市场结构</span><h2 id="countries-title">国家 / 地区 Top 6</h2></div>
+          <span class="section-note">按询盘量排序</span>
+        </div>
+        <div class="table-scroll">
+          <table id="countries"><thead><tr><th>国家 / 地区</th><th>询盘</th><th>占比</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="sources-title">
+        <div class="section-head">
+          <div><span class="eyebrow">渠道结构</span><h2 id="sources-title">来源 Top 6</h2></div>
+          <span class="section-note">按询盘量排序</span>
+        </div>
+        <div class="table-scroll">
+          <table id="sources"><thead><tr><th>来源</th><th>询盘</th><th>占比</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div class="focus-grid">
+      <section class="card" aria-labelledby="gmv-title">
+        <div class="section-head">
+          <div><span class="eyebrow">成交结果</span><h2 id="gmv-title">累计已确认成交额</h2></div>
+          <span class="section-note">按币种分开累计</span>
+        </div>
+        <div id="gmv" class="meta-grid"></div>
+        <div id="direct-deals" class="direct-deals"></div>
+      </section>
+
+      <section class="card" aria-labelledby="ops-title">
+        <div class="section-head">
+          <div><span class="eyebrow">运营健康</span><h2 id="ops-title">数据与 AI 状态</h2></div>
+          <span class="section-note">同步 / 主数据 / AI</span>
+        </div>
+        <div id="ops" class="meta-grid"></div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="quality-title">
+      <div class="section-head">
+        <div><span class="eyebrow">数据质量</span><h2 id="quality-title">影响经营的资料缺口</h2></div>
+        <a href="/data-quality" class="section-note">查看完整质量页 →</a>
+      </div>
+      <div class="quality-group-title">近 30 天</div>
+      <div class="table-scroll">
+        <table id="quality-recent"><thead><tr><th>缺口</th><th>数量</th><th>级别</th><th>影响</th></tr></thead><tbody></tbody></table>
+      </div>
+      <details class="quality-history">
+        <summary>历史缺口（不影响当前告警）</summary>
+        <div class="table-scroll">
+          <table id="quality-history"><thead><tr><th>缺口</th><th>数量</th><th>级别</th><th>影响</th></tr></thead><tbody></tbody></table>
+        </div>
+      </details>
+    </section>
+
+    <section class="card" aria-labelledby="grade-title">
+      <div class="section-head">
+        <div><span class="eyebrow">重点补全</span><h2 id="grade-title">待补买家等级</h2></div>
+        <button id="export-grade" class="secondary" type="button">导出当前清单 CSV</button>
+      </div>
+      <p id="grade-summary" class="section-note grade-summary">正在统计近 30 天待补等级询盘…</p>
+      <div id="grade-filters" class="tabs grade-filters"></div>
+      <div class="table-scroll">
+        <table id="grade-items"><thead><tr><th>询盘</th><th>客户 / 公司</th><th>来源</th><th>负责人</th><th>国家</th><th>创建时间</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/business.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

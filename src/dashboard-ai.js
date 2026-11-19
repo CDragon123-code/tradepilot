@@ -131,7 +131,20 @@
     return { promise, abort: () => { try { port.postMessage({ type: 'abort' }); } catch (e) { /* 已断开 */ } } };
   }
 
-  const api = { demandContext, reportContext, openStream, openDifyStream };
+  function storeOverviewContext(d) {
+    return JSON.stringify({
+      口径: '本机已导入资料的历史汇总；成交额按币种分开累计，不跨币种相加；订单为已付款或已完成状态，订单数不是询盘去重数。',
+      生成时间: d.generatedAt,
+      核心指标: d.kpis,
+      转化漏斗: d.funnel,
+      近6个月趋势: d.trend,
+      国家Top: d.countries,
+      来源Top: d.sources,
+      资料缺口: d.quality,
+    });
+  }
+
+  const api = { demandContext, reportContext, storeOverviewContext, openStream, openDifyStream };
   if (typeof self !== 'undefined') self.AliDashboardAI = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

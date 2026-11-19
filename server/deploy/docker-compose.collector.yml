@@ -1,0 +1,29 @@
+# 云端采集器（可选）：只读采集询盘，不发送消息
+# 启动：docker compose -f docker-compose.prod.yml -f docker-compose.ip.yml -f docker-compose.collector.yml --profile collector up -d collector
+services:
+  collector:
+    build:
+      context: ../..
+      dockerfile: server/collector/Dockerfile
+    restart: unless-stopped
+    profiles: ["collector"]
+    mem_limit: 700m
+    environment:
+      API_BASE: http://api:8787
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
+      SELLER_ID: ${SELLER_ID:-seller-main}
+      COLLECT_SELLERS: ${COLLECT_SELLERS:-}
+      INQUIRY_URL: ${INQUIRY_URL:-https://i.alibaba.com/hub/alicrm/inquiryList.htm}
+      INTERVAL_MINUTES: ${COLLECTOR_INTERVAL:-60}
+      RUN_ONCE: ${COLLECTOR_RUN_ONCE:-0}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./collector-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

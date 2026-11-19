@@ -9,7 +9,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-外贸智能助手 (TradePilot) is a Chrome/Edge extension for Alibaba.com sellers: export inquiries, chats, customers and visitors to Excel, then review the same data in a local dashboard with AI chat analysis.
+外贸智能助手 (TradePilot) is a Chrome/Edge extension for Alibaba.com sellers: export inquiries, chats, customers and visitors to Excel, then review the same data in a local dashboard with AI chat analysis. The repository also includes an optional self-hosted cloud data platform under `server/`.
 
 [Privacy](PRIVACY.md) | [Install locally](#install-locally) | [Package for store submission](#package-for-store-submission) | [API providers](#api-providers)
 
@@ -42,6 +42,7 @@ Everything runs on the seller page you are already logged into. Cloud sync is op
 * **Data dashboard** — built-in page with today's to-dos, inquiry leads, customer assets, demand words, ads diagnosis, weekly report, and a library of imported files.
 * **Local library** — every export is ingested automatically; existing `.xlsx` files can be imported too.
 * **Optional cloud sync** — ingested rows go into a local outbox and upload to your own server in batches, with retry and resume.
+* **Optional self-hosted cloud platform** — data assets, master data, quality checks, AI agent tasks, API gateway and audit, and a business overview. Deploy with Docker Compose from `server/`.
 * **OpenAI-compatible models** — DeepSeek, Qwen, OpenAI, Zhipu GLM or any custom `/chat/completions` endpoint.
 
 ## Dashboard
@@ -65,10 +66,11 @@ Everything runs on the seller page you are already logged into. Cloud sync is op
 | `scripting`          | Create the blob download inside the page so the platform's own download path is used.    |
 | `storage`            | Keep settings, API key, and pending job state in the local browser.                      |
 | `unlimitedStorage`   | Hold the local IndexedDB dataset used by the dashboard.                                  |
+| `cookies`            | Optional cloud collector: upload the Alibaba login state to the server you configure.    |
 | `https://*.alibaba.com/*` | Read the pages and endpoints you are already logged into.                          |
 | AI provider domains  | Send prompts to the model endpoint you configure. No other host is contacted.            |
 
-No `cookies` permission, no background network service, no remote logging.
+The extension works standalone by default. Cloud sync is optional and disabled by default; when enabled, data is uploaded only to the server you configure.
 
 ## API Providers
 
@@ -81,6 +83,17 @@ The dashboard and chat analysis support OpenAI-compatible `/chat/completions` AP
 * Custom OpenAI-compatible endpoint
 
 API keys are stored only in `chrome.storage.local` on your machine.
+
+## Cloud Platform (Optional)
+
+The repository includes a self-hosted data platform under `server/`:
+
+- Node.js 22 + PostgreSQL + Caddy, deployed with Docker Compose.
+- Data assets, master data, quality checks, AI agent tasks, API gateway and audit, and a business overview.
+- Multi-tenant and multi-seller data separation; sub-account data can be isolated by `seller_id`.
+- No production endpoints, credentials, cookies or customer data are included. Configure your own `.env` before deployment.
+
+See [server/README.md](server/README.md) for deployment and API details.
 
 ## Install Locally
 
@@ -105,27 +118,41 @@ Do not include `.git`, `docs`, `qrcode.jpg`, or existing `.zip` files in the sto
 ```
 manifest.json
 dashboard.html
+executor.html
+options.html
 src/
-  content.js      in-page workbench UI + collection and export
-  background.js   download rename, request proxy, ingest, AI streaming
-  db.js           IndexedDB data layer
-  analyze.js      dashboard metrics
-  dashboard.js    dashboard views
-  sse.js          SSE stream parser
+  content.js        in-page workbench UI + collection and export
+  background.js     download rename, request proxy, ingest, AI streaming
+  cloud-outbox.js   optional cloud upload queue
+  db.js             IndexedDB data layer
+  analyze.js        dashboard metrics
+  dashboard.js      dashboard views
+  inquiry-reply.js  send-gate checks
+  dify.js           Dify knowledge-base client
 assets/
   icon-16/32/48/128/256/512.png
 docs/images/
+server/
+  src/              Node.js API
+  migrations/       PostgreSQL schema
+  public/           cloud console pages
+  collector/        optional server-side inquiry collector
+  deploy/           Docker Compose, Caddy, backup scripts
+  test/             Node test suite
 README.md
 README.zh-CN.md
 PRIVACY.md
+LICENSE
 qrcode.jpg
 ```
 
 ## Privacy
 
-TradePilot has no backend. Exported Excel files go straight to your downloads folder; dashboard data lives in the extension's IndexedDB; settings and API keys live in `chrome.storage.local`.
+The extension works standalone by default. Exported Excel files go straight to your downloads folder; dashboard data lives in the extension's IndexedDB; settings and API keys live in `chrome.storage.local`.
 
-When you use AI analysis, the prompt is sent from your browser directly to the API endpoint you configured. Nothing is proxied through the author.
+The optional `server/` platform is self-hosted. When cloud sync is enabled, selected data and the Alibaba login state are uploaded only to the server you configure. Nothing is proxied through the author.
+
+When you use AI analysis, the prompt is sent from your browser directly to the API endpoint you configured.
 
 See [PRIVACY.md](PRIVACY.md) for details.
 
@@ -138,6 +165,8 @@ Released under [PolyForm Noncommercial 1.0.0](LICENSE) — free to use, modify a
 ## Status
 
 MVP for personal use and validation. Platform endpoints change without notice, so a broken feature usually means a changed field rather than a broken extension. Not affiliated with Alibaba Group. Use it only for accounts you own and follow the platform terms.
+
+This public repository contains no real customer data, production credentials, cookies, or deployed endpoints. Test fixtures use fictional names and data.
 
 ---
 

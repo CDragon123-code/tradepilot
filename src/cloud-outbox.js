@@ -9,7 +9,7 @@
   const PART_SIZE = 200;          // 单个分片行数（与服务端上限 5000 留足余量）
   const ITEM_MAX_ROWS = 5000;     // 单条队列项最大行数，超出拆成多条
   const MAX_QUEUED_ROWS = 20000;  // 队列总量上限，超出丢弃最旧的
-  const MAX_ITEMS_PER_RUN = 2;    // 单次 drain 最多处理 2 条，避免 SW 被回收
+  const MAX_ITEMS_PER_RUN = 8;    // 单次 drain 最多处理 8 条，减少"手动等同步"的等待
   const DEFAULTS = { enabled: false, baseUrl: '', token: '', sellerId: '' };
 
   function normalizeConfig(raw) {
@@ -95,12 +95,30 @@
     return null;
   }
 
+  // 页面导出/自动采集给的是「header + 数组行」，服务端契约要求 payload 为对象；
+  // 入队前统一按 header 转对象，避免把数组当 payload 上传（服务端会 400 payload_invalid）。
+  function objectRows(header, rows) {
+    const h = Array.isArray(header) ? header : [];
+    if (!h.length) return Array.isArray(rows) ? rows : [];
+    return (rows || []).map((row) => {
+      if (!Array.isArray(row)) return row;
+      const out = {};
+      h.forEach((key, i) => { if (key) out[key] = row[i] === undefined || row[i] === null ? '' : row[i]; });
+      return out;
+    });
+  }
+
   function toPayloadRows(kind, rows) {
     return (rows || []).map((row) => ({
       platform_id: rowKey(kind, row),
       payload: row,
       business_at: businessAtOf(kind, row),
     }));
+  }
+
+  // 旧版本队列项把数组直接存成了 payload，无法再上传；数据仍在本机资料库，丢弃后可用「立即补传」重建。
+  function isLegacyItem(item) {
+    return !!(item && Array.isArray(item.rows) && item.rows.some((r) => !r || Array.isArray(r.payload)));
   }
 
   function chunkRows(rows, size) {
@@ -150,8 +168,8 @@
     if (!file || !Array.isArray(file.rows) || !file.rows.length) return { ok: false, reason: 'empty' };
     const cfg = await loadConfig();
     if (!opts.force && !cfg.enabled) return { ok: false, reason: 'disabled' };
-    // 入队即转成服务端契约行，上传时不再二次转换
-    const rows = toPayloadRows(file.kind, file.rows);
+    // 入队即转成服务端契约行（数组行先按 header 转对象），上传时不再二次转换
+    const rows = toPayloadRows(file.kind, objectRows(file.header, file.rows));
     const pieces = chunkRows(rows, ITEM_MAX_ROWS);
     const list = await readQueue();
     pieces.forEach((piece, i) => {
@@ -166,7 +184,8 @@
         lastError: '',
       });
     });
-    const capped = applyQueueCap(list, MAX_QUEUED_ROWS);
+    // 手动补传是显式全量操作，不做队列上限裁剪；日常导出仍受上限保护
+    const capped = opts.force ? { list: list, dropped: 0, droppedRows: 0 } : applyQueueCap(list, MAX_QUEUED_ROWS);
     await writeQueue(capped.list);
     await writeStatus({
       queued: capped.list.length,
@@ -239,8 +258,14 @@
     let uploadedRows = 0;
     let lastError = '';
     let lastImportId = '';
+    let droppedLegacy = 0;
     for (const item of list) {
       if (handled >= MAX_ITEMS_PER_RUN) break;
+      if (isLegacyItem(item)) {
+        item.done = true;
+        droppedLegacy += 1;
+        continue;
+      }
       if (Number(item.nextAt || 0) > now) continue;
       try {
         const r = await uploadItem(cfg, item);
@@ -252,21 +277,29 @@
       } catch (e) {
         item.attempts = Number(item.attempts || 0) + 1;
         item.nextAt = Date.now() + backoffMs(item.attempts);
-        item.lastError = String((e && e.message) || e).slice(0, 300);
+        item.lastError = e && e.status === 401
+          ? '登录已过期，请在设置页重新登录'
+          : String((e && e.message) || e).slice(0, 300);
         lastError = item.lastError;
         handled += 1;
       }
     }
     const rest = list.filter((it) => !it.done);
     await writeQueue(rest);
+    if (droppedLegacy && !lastError) lastError = '已清理 ' + droppedLegacy + ' 条旧格式上传项（数据仍在本机，请点「立即补传」重传）';
     await writeStatus({
       ok: !lastError,
       queued: rest.length,
       queuedRows: rest.reduce((s, it) => s + it.rows.length, 0),
       uploaded: uploadedRows,
+      droppedLegacy: droppedLegacy,
       lastImportId: lastImportId,
       lastError: lastError,
     });
+    // 还有剩余就 1 分钟后继续，不必等 5 分钟的常规闹钟
+    if (rest.length && typeof chrome !== 'undefined' && chrome.alarms) {
+      try { await chrome.alarms.create('aliCloudDrainSoon', { delayInMinutes: 1 }); } catch (e) { /* 忽略 */ }
+    }
     return Object.assign(base, { skipped: '', uploaded: uploadedRows, remaining: rest.length, lastError: lastError });
   }
 
@@ -276,7 +309,7 @@
     return Object.assign({ queued: queue.length, queuedRows: queue.reduce((s, it) => s + it.rows.length, 0) }, saved);
   }
 
-  const api = { normalizeConfig, loadConfig, saveConfig, rowKey, businessAtOf, toPayloadRows, chunkRows, backoffMs, applyQueueCap, hash64, enqueue, drain, status };
+  const api = { normalizeConfig, loadConfig, saveConfig, rowKey, businessAtOf, objectRows, toPayloadRows, isLegacyItem, chunkRows, backoffMs, applyQueueCap, hash64, enqueue, drain, status };
   if (typeof self !== 'undefined') self.AliCloudOutbox = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })();

@@ -113,8 +113,38 @@
     return o;
   };
 
-  // 读取若干类型的数据（跨文件合并 + 业务主键去重，最新文件优先）
-  async function dataset(kinds) {
+  // 云端优先：登录并启用后以云端为唯一数据源；失败回落到本地缓存（离线兜底）
+  const cloudCache = new Map();
+  async function cloudConfig() {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) return null;
+      const d = await chrome.storage.local.get('aliCloudConfig');
+      const c = d && d.aliCloudConfig;
+      if (!c || !c.enabled || !c.baseUrl || !c.token) return null;
+      return c;
+    } catch (e) { return null; }
+  }
+  async function cloudDataset(kinds) {
+    const cfg = await cloudConfig();
+    if (!cfg) return null;
+    const key = kinds.join(',');
+    const hit = cloudCache.get(key);
+    if (hit && Date.now() - hit.at < 60000) return hit.data;
+    try {
+      const url = cfg.baseUrl.replace(/\/+$/, '') + '/api/dataset?kinds=' + encodeURIComponent(key);
+      const res = await fetch(url, { headers: { authorization: 'Bearer ' + cfg.token }, cache: 'no-store' });
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (!json || !json.datasets) return null;
+      cloudCache.set(key, { at: Date.now(), data: json.datasets });
+      return json.datasets;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // 本地读取（离线缓存 / 对账用）
+  async function localDataset(kinds) {
     const db = await open();
     const wid = await activeWorkspace();
     const metas = (await pr(db.transaction('meta', 'readonly').objectStore('meta').getAll()))
@@ -128,6 +158,21 @@
       files.push({ meta: m, header: d.header, rows: d.rows });
     }
     return CORE.mergeFiles(files, kinds);
+  }
+
+  // 读取若干类型的数据（云端优先；未登录或不可用时才读本地缓存）
+  async function dataset(kinds) {
+    const cloud = await cloudDataset(kinds);
+    if (cloud) return cloud;
+    return localDataset(kinds);
+  }
+
+  // 本机缓存条数（心跳对账用，不受云端优先影响）
+  async function localCounts(kinds) {
+    const data = await localDataset(kinds);
+    const out = {};
+    (kinds || []).forEach((k) => { out[k] = (data[k] || []).length; });
+    return out;
   }
 
   async function removeFile(name) {
@@ -240,5 +285,5 @@
     return { ok: true, imported: n };
   }
 
-  self.AliDB = { KINDS, KEY_FIELD, STAGE_VALUES, activeWorkspace, ingest, ingestMany, list, dataset, setStage, stageMap, stageHistory, removeFile, clearAll, exportJson, importJson, toObj };
+  self.AliDB = { KINDS, KEY_FIELD, STAGE_VALUES, activeWorkspace, ingest, ingestMany, list, dataset, localDataset, localCounts, setStage, stageMap, stageHistory, removeFile, clearAll, exportJson, importJson, toObj };
 })();

@@ -7,7 +7,7 @@
   position: fixed;
   right: 0;
   top: 42%;
-  z-index: 2147482999;
+  z-index: 2147483646;
   padding: 15px 7px;
   border: 1px solid #a9c7ef;
   border-right: 0;
@@ -83,6 +83,17 @@
   font-size: 12px;
 }
 #ali-export-panel #ali-collapse:hover { background: #f4f7fc; }
+#ali-export-panel #ali-check-update {
+  flex: none;
+  border: 1px solid #bcd3f5;
+  border-radius: 9px;
+  padding: 6px 9px;
+  color: #1753ab;
+  background: #f2f7ff;
+  font-size: 12px;
+}
+#ali-export-panel #ali-check-update:hover { background: #e6f0ff; }
+#ali-export-panel #ali-check-update:disabled { opacity: .6; cursor: default; }
 #ali-export-panel .ali-wb-body { padding: 16px 18px 18px; }
 #ali-export-panel .ali-wb-page {
   display: flex;
@@ -171,7 +182,7 @@
 
 #ali-dock {
   position: fixed;
-  z-index: 2147483000;
+  z-index: 2147483647;
   top: 82px;
   left: 0;
   display: flex;

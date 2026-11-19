@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API 与权限 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / API 与权限</div>
+      <h1>谁能调用什么，一眼看清</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>令牌最小化、操作全留痕。</h2>
+      <p>员工用账号登录；扩展与采集器使用独立 API 令牌，按 read / write / collector 范围授权，并可随时轮换或停用。</p>
+      <div class="login-steps"><span>01 分配令牌</span><span>02 限制范围</span><span>03 查看调用与审计</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">仅管理员可进入本页；其他角色可查看数据但无法管理令牌。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">权限简报</span><p id="briefing-text">正在读取权限与网关状态…</p></div>
+      <span id="gateway-badge" class="quality-badge">读取中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <div id="tabs" class="tabs page-tabs"></div>
+
+    <section id="denied" class="card hidden">
+      <h2>仅管理员可访问</h2>
+      <p class="muted">当前身份不是管理员，无法管理员工、API 令牌与审计。请使用管理员账号登录。</p>
+    </section>
+
+    <div id="panel-overview" class="admin-panel">
+      <div class="focus-grid">
+        <section class="card" aria-labelledby="matrix-title">
+          <div class="section-head">
+            <div><span class="eyebrow">角色边界</span><h2 id="matrix-title">权限矩阵</h2></div>
+            <span class="section-note">角色在云端统一生效</span>
+          </div>
+          <div class="table-scroll">
+            <table id="role-matrix" class="role-matrix"><thead><tr><th>能力</th><th>管理员</th><th>运营</th><th>只读</th></tr></thead><tbody></tbody></table>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="paths-title">
+          <div class="section-head">
+            <div><span class="eyebrow">近 24 小时</span><h2 id="paths-title">高频接口</h2></div>
+            <span class="section-note">按调用次数排序</span>
+          </div>
+          <div class="table-scroll">
+            <table id="top-paths"><thead><tr><th>接口</th><th>调用</th><th>错误/拦截</th></tr></thead><tbody></tbody></table>
+          </div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="gateway-meta-title">
+        <div class="section-head">
+          <div><span class="eyebrow">网关状态</span><h2 id="gateway-meta-title">令牌与兼容配置</h2></div>
+          <span class="section-note">传统采集/只读令牌仍可用</span>
+        </div>
+        <div id="gateway-meta" class="meta-grid"></div>
+      </section>
+    </div>
+
+    <div id="panel-employees" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">员工账号</span><h2>创建员工</h2></div>
+          <span class="section-note">员工登录扩展使用这里的邮箱与密码</span>
+        </div>
+        <div class="form-grid">
+          <label>邮箱<input id="new-email" type="email" placeholder="alice@company.com"></label>
+          <label>姓名<input id="new-name" type="text" placeholder="爱丽丝"></label>
+          <label>初始密码（至少 8 位）<input id="new-password" type="text" placeholder="例如 TradePilot2026"></label>
+          <label>角色
+            <select id="new-role">
+              <option value="operator">operator · 可读可采集</option>
+              <option value="viewer">viewer · 只读</option>
+              <option value="admin">admin · 管理员</option>
+            </select>
+          </label>
+          <label>店铺 ID<input id="new-seller" type="text" value="seller-main"></label>
+          <label>阿里账号<select id="new-alibaba"><option value="">暂不绑定</option></select></label>
+        </div>
+        <div class="todo-actions">
+          <button id="create-employee" class="primary" type="button">创建账号</button>
+        </div>
+        <p id="create-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">成员</span><h2>员工列表</h2></div>
+          <span class="section-note">修改角色/店铺或重置密码后需要重新登录</span>
+        </div>
+        <div class="table-scroll">
+          <table id="employees"><thead><tr><th>邮箱</th><th>姓名</th><th>阿里账号</th><th>负责人</th><th>角色</th><th>店铺</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+        <p id="employee-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">平台身份</span><h2>阿里国际站账号</h2></div>
+          <span class="section-note">只存登录名与绑定关系，不存阿里密码</span>
+        </div>
+        <div class="form-grid">
+          <label>阿里登录名<input id="ali-login" type="text" placeholder="例如 main_account / sub_account"></label>
+          <label>类型
+            <select id="ali-type">
+              <option value="main">主账号</option>
+              <option value="sub">子账号</option>
+            </select>
+          </label>
+          <label>店铺 ID<input id="ali-seller" type="text" value="seller-main" placeholder="主账号 seller-main；子账号如 seller-sub"></label>
+          <label>负责人<input id="ali-owner" type="text" placeholder="例如 main_account / Sub Account"></label>
+          <label>显示名<input id="ali-display" type="text" placeholder="例如 主账号 / Sub"></label>
+          <label>备注<input id="ali-note" type="text" placeholder="可选"></label>
+        </div>
+        <div class="todo-actions">
+          <button id="ali-save" class="primary" type="button">新增阿里账号</button>
+          <button id="ali-cancel" class="secondary hidden" type="button">取消编辑</button>
+        </div>
+        <p id="ali-status" class="status-line"></p>
+        <div class="table-scroll">
+          <table id="ali-accounts"><thead><tr><th>登录名</th><th>类型</th><th>店铺</th><th>负责人</th><th>显示名</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-tokens" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">API 网关</span><h2>创建 API 令牌</h2></div>
+          <span class="section-note">明文令牌只显示一次，请立即保存</span>
+        </div>
+        <div class="form-grid">
+          <label>名称<input id="client-name" type="text" placeholder="例如 采集器-主账号"></label>
+          <label>类型
+            <select id="client-kind">
+              <option value="extension">extension · 扩展插件</option>
+              <option value="collector">collector · 采集器</option>
+              <option value="external">external · 外部工具</option>
+            </select>
+          </label>
+          <label>限流（次/分钟）<input id="client-rate" type="number" min="1" max="6000" value="120"></label>
+          <label>店铺 ID<input id="client-seller" type="text" value="seller-main"></label>
+        </div>
+        <div class="scope-options">
+          <label><input id="scope-read" type="checkbox" checked> read · 读取数据</label>
+          <label><input id="scope-write" type="checkbox"> write · 采集写入</label>
+          <label><input id="scope-collector" type="checkbox"> collector · 采集登录态</label>
+        </div>
+        <div class="todo-actions">
+          <button id="create-client" class="primary" type="button">创建令牌</button>
+        </div>
+        <p id="client-status" class="status-line"></p>
+        <div id="token-reveal" class="one-time-token hidden">
+          <strong id="token-title">新令牌（只显示一次）</strong>
+          <code id="token-value"></code>
+          <div class="todo-actions"><button id="copy-token" class="secondary" type="button">复制令牌</button></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">令牌台账</span><h2>API 令牌</h2></div>
+          <span class="section-note">停用或轮换后旧令牌立即失效</span>
+        </div>
+        <div class="table-scroll">
+          <table id="clients"><thead><tr><th>名称</th><th>类型</th><th>范围</th><th>店铺</th><th>限流</th><th>状态</th><th>最近使用</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-gate" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">发送安全</span><h2>店铺发送开关</h2></div>
+          <span class="section-note">暂停后扩展与执行器都不能领取</span>
+        </div>
+        <div id="gate-state" class="meta-grid"></div>
+        <div class="filter-bar" style="margin-top:14px">
+          <input id="gate-reason" type="text" placeholder="暂停原因（可选）">
+          <button id="gate-toggle" type="button">暂停发送</button>
+        </div>
+        <p id="gate-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">不联系名单</span><h2>DNC</h2></div>
+          <span class="section-note">名单内客户不会进入可发送队列</span>
+        </div>
+        <div class="form-grid">
+          <label>客户键 / 询盘 ID<input id="dnc-key" type="text" placeholder="例如 1001 或 inquiry:1001"></label>
+          <label>原因<input id="dnc-reason" type="text" placeholder="例如：买家明确拒绝联系"></label>
+          <label>截止时间（可选）<input id="dnc-until" type="text" placeholder="2026-12-31 00:00"></label>
+        </div>
+        <div class="todo-actions">
+          <button id="dnc-add" class="primary" type="button">加入名单</button>
+          <button id="dnc-refresh" class="secondary" type="button">刷新</button>
+        </div>
+        <p id="dnc-status" class="status-line"></p>
+        <div class="table-scroll">
+          <table id="dnc-rows"><thead><tr><th>客户键</th><th>原因</th><th>截止</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-calls" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">调用审计</span><h2>API 调用流水</h2></div>
+          <span class="section-note">最近 100 条，按时间倒序</span>
+        </div>
+        <div class="filter-bar">
+          <select id="calls-filter">
+            <option value="0">全部状态</option>
+            <option value="400">仅错误（≥400）</option>
+            <option value="401">未授权（401）</option>
+            <option value="403">无权限（403）</option>
+            <option value="429">限流（429）</option>
+          </select>
+          <button id="calls-refresh" class="secondary" type="button">刷新</button>
+        </div>
+        <div class="table-scroll">
+          <table id="calls"><thead><tr><th>时间</th><th>客户端</th><th>身份</th><th>方法</th><th>路径</th><th>状态</th><th>耗时</th><th>IP</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-audit" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">操作审计</span><h2>关键操作</h2></div>
+          <span class="section-note">登录、员工、令牌、主数据、门禁与 DNC</span>
+        </div>
+        <div class="filter-bar">
+          <input id="audit-action" type="search" placeholder="动作，如 api_token / master" autocomplete="off">
+          <input id="audit-actor" type="search" placeholder="操作人邮箱或 ID" autocomplete="off">
+          <button id="audit-search" class="secondary" type="button">查询</button>
+        </div>
+        <div class="table-scroll">
+          <table id="audits"><thead><tr><th>时间</th><th>操作人</th><th>动作</th><th>目标</th><th>详情</th><th>IP</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/admin.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

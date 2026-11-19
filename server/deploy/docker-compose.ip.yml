@@ -1,0 +1,8 @@
+# 临时 IP 访问模式叠加文件，用法：
+#   docker compose -f docker-compose.prod.yml -f docker-compose.ip.yml up -d --build
+services:
+  caddy:
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./Caddyfile.ip:/etc/caddy/Caddyfile:ro

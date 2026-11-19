@@ -320,10 +320,11 @@
     const sessionProfile = new Map();   // norm(session) -> profile
     sessionMap.forEach((s) => {
       let p = matchName(s.name);
-      if (!p) {
+      const isNew = !p;
+      if (isNew) {
+        // 未匹配到客户/询盘的会话只作为弱证据：留在 chatOnly，不进入客户档案，也不注册全局别名
         p = makeProfile('chat:' + s.k, s.name, 'chat');
         chatOnly.push(p);
-        profiles.push(p);
       }
       sessionProfile.set(s.k, p);
       if (p.chatSessions.indexOf(s.name) < 0) p.chatSessions.push(s.name);
@@ -331,7 +332,7 @@
       if (s.last && s.last > p.lastChat) p.lastChat = s.last;
       addAlias(p, s.name);
       p.sources.add('chat');
-      registerAliases(p);
+      if (!isNew) registerAliases(p);
     });
 
     uniqueProfiles();

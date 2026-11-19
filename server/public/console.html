@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>外贸助手 · 智能体工作台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #1c2d47; background: #f4f7fb; font: 14px/1.6 "Microsoft YaHei", "PingFang SC", sans-serif; }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: #fff; border-bottom: 1px solid #e6eef8; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: #fff; background: #1858c9; font-weight: 700; }
+  .brand b { font-size: 15px; }
+  .brand small { display: block; color: #6b7e96; font-size: 11px; }
+  .who { font-size: 12px; color: #51647c; cursor: pointer; }
+  .layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 14px; padding: 14px 20px 40px; max-width: 1280px; margin: 0 auto; }
+  .card { background: #fff; border: 1px solid #dfe7f1; border-radius: 12px; padding: 14px; }
+  .card + .card { margin-top: 12px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .hint { color: #8292a7; font-size: 12px; margin: 0 0 10px; }
+  .list-item { padding: 9px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+  .list-item:hover { background: #f6f9ff; }
+  .list-item.active { background: #eef4ff; border-color: #cfe0ff; }
+  .li-top { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+  .li-sub { color: #8292a7; font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #eef4ff; color: #1858c9; }
+  .tag.warn { background: #fff6e6; color: #b45309; }
+  .tag.ok { background: #e7f8ef; color: #15803d; }
+  .chat { display: flex; flex-direction: column; min-height: 70vh; }
+  .msgs { flex: 1; overflow-y: auto; padding: 6px 2px; max-height: 62vh; }
+  .msg { margin: 10px 0; display: flex; }
+  .msg .bubble { max-width: 78%; padding: 9px 12px; border-radius: 10px; white-space: pre-wrap; font-size: 13px; }
+  .msg.customer { justify-content: flex-start; }
+  .msg.customer .bubble { background: #f1f4f9; }
+  .msg.agent { justify-content: flex-end; }
+  .msg.agent .bubble { background: #e8f1ff; }
+  .msg.human { justify-content: flex-end; }
+  .msg.human .bubble { background: #e7f8ef; }
+  .msg.blocked .bubble { background: #fdeceb; border: 1px dashed #f3b4ae; }
+  .meta { color: #8292a7; font-size: 11px; margin-top: 3px; }
+  .composer { display: flex; gap: 8px; margin-top: 10px; }
+  textarea { flex: 1; min-height: 52px; padding: 8px 10px; border: 1px solid #dfe7f1; border-radius: 9px; font: 14px "Microsoft YaHei", sans-serif; resize: vertical; }
+  button { min-height: 34px; padding: 6px 14px; border: 0; border-radius: 8px; background: #1858c9; color: #fff; font: 700 13px "Microsoft YaHei", sans-serif; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: #eef4ff; color: #1858c9; }
+  button.sm { min-height: 26px; padding: 2px 8px; font-size: 12px; }
+  .esc { border: 1px solid #f3b4ae; background: #fff7f6; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .esc .row { display: flex; gap: 8px; margin-top: 8px; }
+  .status { font-size: 12px; font-weight: 600; color: #6b7e96; min-height: 18px; margin: 8px 0 0; }
+  .status.err { color: #b91c1c; }
+  .status.ok { color: #15803d; }
+  .hidden { display: none !important; }
+  input, select { width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid #dfe7f1; border-radius: 8px; font: 13px "Microsoft YaHei", sans-serif; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+</style>
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<script src="/assets/shell.js" defer></script>
+<div class="top">
+  <div class="brand"><span class="mark">贸</span><span><b>智能体工作台</b><small>实时对话 · 卡点转人工 · 继续执行</small></span></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <button class="sm ghost" id="open-ali-top">打开阿里国际站</button>
+    <div class="who hidden" id="who"></div>
+  </div>
+</div>
+<div class="layout" id="login-wrap">
+  <div class="card" style="grid-column: 1 / -1; max-width: 420px; margin: 40px auto;">
+    <h3>管理员登录</h3>
+    <p class="hint">与员工后台共用账号。</p>
+    <label class="field"><span>邮箱</span><input id="login-email" type="email" placeholder="admin@example.com"></label>
+    <label class="field"><span>密码</span><input id="login-password" type="password"></label>
+    <div class="row2" style="margin-top:10px"><button id="login-btn">登录</button><button class="ghost" id="to-agents">AI 运营台</button></div>
+    <p class="status" id="login-status"></p>
+  </div>
+</div>
+
+<div class="layout hidden" id="app">
+  <aside>
+    <div class="card">
+      <h3>分配建议</h3>
+      <p class="hint">智能体评估未分配客户后给建议，可一键采纳。</p>
+      <div class="row2">
+        <select id="sug-agent"></select>
+        <button class="sm" id="sug-gen">让智能体评估</button>
+      </div>
+      <div id="sug-list" style="margin-top:8px"></div>
+      <p class="status" id="sug-status"></p>
+    </div>
+
+    <div class="card">
+      <h3>执行台</h3>
+      <p class="hint">已通过的回复在扩展里执行；这里可以直接打开阿里窗口核对。</p>
+      <div class="row2">
+        <button class="sm" id="open-ali">打开阿里窗口</button>
+        <button class="sm ghost" id="exec-refresh">刷新队列</button>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid #eef2f8">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:#49617f;cursor:pointer">
+          <input type="checkbox" id="send-paused" style="width:auto;min-height:auto"> 店铺发送停机（所有领取都会被云端拒绝）
+        </label>
+        <div class="row2" style="margin-top:6px">
+          <input id="pause-reason" placeholder="停机原因（可选）">
+          <button class="sm" id="send-pause-save">保存开关</button>
+        </div>
+        <p class="status" id="send-control-status"></p>
+      </div>
+      <div id="exec-list" style="margin-top:8px"></div>
+      <p class="status" id="exec-status"></p>
+    </div>
+
+    <div class="card">
+      <h3>会话</h3>
+      <div class="row2">
+        <select id="new-agent"></select>
+        <button class="sm" id="new-thread">新建会话</button>
+      </div>
+      <div id="thread-list" style="margin-top:8px"></div>
+      <p class="status" id="thread-status"></p>
+    </div>
+  </aside>
+
+  <main class="card chat">
+    <div id="chat-head" class="hidden">
+      <h3 id="chat-title">—</h3>
+      <p class="hint" id="chat-sub"></p>
+    </div>
+    <div class="esc hidden" id="esc-box">
+      <b>需要人工介入</b>
+      <div class="hint" id="esc-reason"></div>
+      <div class="hint" id="esc-draft" style="white-space:pre-wrap;color:#51647c"></div>
+      <div class="row"><textarea id="esc-input" placeholder="填写人工结论（会作为人工消息写入会话，然后智能体继续）"></textarea></div>
+      <div class="row"><button id="esc-submit">提交并继续</button><button class="ghost" id="esc-later">稍后处理</button></div>
+      <p class="status" id="esc-status"></p>
+    </div>
+    <div class="msgs" id="msgs"></div>
+    <div class="composer">
+      <textarea id="input" placeholder="以客户身份发一条消息，智能体即时回复…"></textarea>
+      <button id="send">发送</button>
+    </div>
+    <p class="status" id="chat-status"></p>
+  </main>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var TOKEN_KEY = 'aliAdminToken';
+  var token = sessionStorage.getItem(TOKEN_KEY) || '';
+  var agents = [];
+  var current = null;      // { thread, messages }
+  var openEscalation = null;
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(v) { return String(v === undefined || v === null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function say(id, text, ok) { var n = $(id); if (!n) return; n.textContent = text; n.className = 'status' + (ok === true ? ' ok' : ok === false ? ' err' : ''); }
+  function gate(show) {
+    $('login-wrap').classList.toggle('hidden', show);
+    $('app').classList.toggle('hidden', !show);
+    $('who').classList.toggle('hidden', !show);
+  }
+  async function api(path, options) {
+    var o = options || {};
+    var headers = { authorization: 'Bearer ' + token };
+    if (o.body) headers['content-type'] = 'application/json';
+    var res = await fetch(path, { method: o.method || 'GET', headers: headers, body: o.body ? JSON.stringify(o.body) : undefined });
+    var data = await res.json().catch(function () { return {}; });
+    if (res.status === 401) { gate(false); throw new Error('登录已过期'); }
+    if (!res.ok) throw new Error(data.message || data.error || ('HTTP ' + res.status));
+    return data;
+  }
+  async function login() {
+    var email = $('login-email').value.trim(), pwd = $('login-password').value;
+    if (!email || !pwd) { say('login-status', '请输入邮箱和密码', false); return; }
+    try {
+      var res = await fetch('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email, password: pwd }) });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) throw new Error(data.message || '登录失败');
+      if (!data.employee || data.employee.role !== 'admin') throw new Error('需要管理员账号');
+      token = data.token; sessionStorage.setItem(TOKEN_KEY, token);
+      $('who').textContent = '当前：' + data.employee.email + '（点击退出）';
+      $('who').onclick = function () { sessionStorage.removeItem(TOKEN_KEY); token = ''; gate(false); };
+      gate(true); await boot();
+    } catch (e) { say('login-status', (e && e.message) || '登录失败', false); }
+  }
+  async function loadAgents() {
+    var d = await api('/api/agents');
+    agents = d.items || [];
+    var opts = agents.map(function (a) { return '<option value="' + a.id + '">' + esc(a.name) + '</option>'; }).join('');
+    $('sug-agent').innerHTML = opts; $('new-agent').innerHTML = opts;
+  }
+  async function loadThreads() {
+    try {
+      var d = await api('/api/threads?limit=30');
+      var items = d.items || [];
+      $('thread-list').innerHTML = items.map(function (t) {
+        var tag = t.status === 'waiting_human' ? '<span class="tag warn">待人工</span>' : '<span class="tag ok">进行中</span>';
+        return '<div class="list-item" data-thread="' + t.id + '"><div class="li-top"><b>' + esc(t.customer_key.replace(/^inquiry:/, '')) + '</b>' + tag + '</div>'
+          + '<div class="li-sub">' + esc(t.last_message || t.subject || '') + '</div></div>';
+      }).join('') || '<p class="hint">还没有会话，先在上面新建</p>';
+      $('thread-status').textContent = '共 ' + items.length + ' 个会话';
+      var first = items[0];
+      if (!current && first) await openThread(first.id);
+    } catch (e) { say('thread-status', e.message, false); }
+  }
+  async function loadSuggestions() {
+    try {
+      var d = await api('/api/suggestions?status=pending&limit=12');
+      var items = d.items || [];
+      $('sug-list').innerHTML = items.map(function (s) {
+        return '<div class="list-item"><div class="li-top"><b>' + esc(s.customer_name || s.customer_key) + '</b><span class="tag">' + Number(s.score).toFixed(0) + ' 分</span></div>'
+          + '<div class="li-sub">' + esc(s.country || '') + ' · ' + esc(s.subject || '') + '</div>'
+          + '<div class="li-sub">' + esc(s.reason) + '</div>'
+          + '<div style="margin-top:6px"><button class="sm" data-accept="' + s.id + '">采纳</button> <button class="sm ghost" data-reject="' + s.id + '">忽略</button></div></div>';
+      }).join('') || '<p class="hint">暂无待处理建议</p>';
+      say('sug-status', '待处理 ' + items.length + ' 条');
+    } catch (e) { say('sug-status', e.message, false); }
+  }
+  async function openThread(id) {
+    var d = await api('/api/threads/' + id);
+    current = d;
+    $('chat-head').classList.remove('hidden');
+    var t = d.thread;
+    $('chat-title').textContent = t.agent_name + ' · ' + String(t.customer_key).replace(/^inquiry:/, '');
+    $('chat-sub').textContent = (t.subject || '') + ' · 状态 ' + t.status;
+    renderMessages(d.messages || []);
+    await findEscalation(t.id);
+    loadSuggestions();
+  }
+  function renderMessages(list) {
+    $('msgs').innerHTML = list.map(function (m) {
+      var cls = 'msg ' + (m.role === 'human' ? 'human' : m.role === 'agent' ? 'agent' : 'customer') + (m.state === 'blocked' ? ' blocked' : '');
+      var label = { customer: '客户', agent: '智能体', human: '人工', system: '系统' }[m.role] || m.role;
+      return '<div class="' + cls + '"><div><div class="bubble">' + esc(m.content) + '</div><div class="meta">' + label
+        + (m.state === 'blocked' ? ' · 已拦截' : '') + ' · ' + new Date(m.created_at).toLocaleString('zh-CN', { hour12: false }) + '</div></div></div>';
+    }).join('');
+    var box = $('msgs'); box.scrollTop = box.scrollHeight;
+  }
+  async function findEscalation(threadId) {
+    openEscalation = null;
+    $('esc-box').classList.add('hidden');
+    try {
+      var d = await api('/api/escalations?status=open&limit=20');
+      var hit = (d.items || []).filter(function (e) { return e.thread_id === threadId; })[0];
+      if (!hit) return;
+      openEscalation = hit;
+      var q = hit.question || {};
+      $('esc-reason').textContent = '原因：' + (hit.reason || '守门命中');
+      $('esc-draft').textContent = q.draft ? ('AI 拟回复：' + q.draft) : '';
+      $('esc-box').classList.remove('hidden');
+    } catch (e) { /* 忽略 */ }
+  }
+  async function send() {
+    if (!current) { say('chat-status', '先选一个会话', false); return; }
+    var text = $('input').value.trim();
+    if (!text) return;
+    $('input').value = '';
+    $('send').disabled = true;
+    say('chat-status', '智能体回复中…');
+    var box = $('msgs');
+    box.insertAdjacentHTML('beforeend', '<div class="msg customer"><div><div class="bubble">' + esc(text) + '</div><div class="meta">客户</div></div></div>');
+    var live = document.createElement('div');
+    live.className = 'msg agent';
+    live.innerHTML = '<div><div class="bubble"></div><div class="meta">智能体 · 生成中…</div></div>';
+    box.appendChild(live);
+    var bubble = live.querySelector('.bubble');
+    box.scrollTop = box.scrollHeight;
+    try {
+      var res = await fetch('/api/threads/' + current.thread.id + '/turn', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+        body: JSON.stringify({ text: text })
+      });
+      if (!res.ok || !res.body) {
+        var err = await res.json().catch(function () { return {}; });
+        throw new Error(err.message || ('HTTP ' + res.status));
+      }
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      for (;;) {
+        var step = await reader.read();
+        if (step.done) break;
+        buf += dec.decode(step.value, { stream: true });
+        var parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (var i = 0; i < parts.length; i++) {
+          var lines = parts[i].split('\n');
+          var ev = '', data = '';
+          lines.forEach(function (l) {
+            if (l.indexOf('event:') === 0) ev = l.slice(6).trim();
+            if (l.indexOf('data:') === 0) data = l.slice(5).trim();
+          });
+          if (!data) continue;
+          var obj = {};
+          try { obj = JSON.parse(data); } catch (e) { continue; }
+          if (ev === 'delta') {
+            bubble.textContent += obj.text || '';
+            box.scrollTop = box.scrollHeight;
+          } else if (ev === 'guard' && obj.risks && obj.risks.length) {
+            say('chat-status', '守门命中：' + obj.risks.map(function (r) { return r.label; }).join('、'), false);
+          } else if (ev === 'done') {
+            live.querySelector('.meta').textContent = '智能体 · ' + (obj.state === 'waiting_human' ? '已转人工' : '完成');
+            say('chat-status', '完成' + (obj.citations && obj.citations.length ? ('，引用 ' + obj.citations.length + ' 条知识') : ''), true);
+          } else if (ev === 'error') {
+            throw new Error(obj.message || '生成失败');
+          }
+        }
+      }
+      await openThread(current.thread.id);
+      await loadThreads();
+    } catch (e) {
+      say('chat-status', (e && e.message) || '发送失败', false);
+      live.remove();
+    } finally { $('send').disabled = false; }
+  }
+  async function resolveEscalation() {
+    if (!openEscalation) return;
+    var text = $('esc-input').value.trim();
+    if (!text) { say('esc-status', '请填写人工结论', false); return; }
+    $('esc-submit').disabled = true;
+    say('esc-status', '提交中，智能体将带着结论继续…');
+    try {
+      await api('/api/escalations/' + openEscalation.id + '/resolve', { method: 'POST', body: { resolution: text } });
+      $('esc-input').value = '';
+      say('esc-status', '已提交，智能体已继续', true);
+      await openThread(current.thread.id);
+      await loadThreads();
+    } catch (e) { say('esc-status', e.message, false); }
+    finally { $('esc-submit').disabled = false; }
+  }
+  async function createThread() {
+    var agentId = $('new-agent').value;
+    var key = window.prompt('客户询盘 ID（例如 13956158889）');
+    if (!key) return;
+    try {
+      var d = await api('/api/threads', { method: 'POST', body: { agent_id: agentId, customer_key: key } });
+      await loadThreads();
+      await openThread(d.thread.id);
+    } catch (e) { say('thread-status', e.message, false); }
+  }
+  async function generateSuggestions() {
+    var agentId = $('sug-agent').value;
+    if (!agentId) return;
+    say('sug-status', '评估中…');
+    try {
+      var d = await api('/api/agents/' + agentId + '/suggestions', { method: 'POST', body: { limit: 30 } });
+      say('sug-status', '新增 ' + d.created + ' 条建议', true);
+      await loadSuggestions();
+    } catch (e) { say('sug-status', e.message, false); }
+  }
+  var execItems = [];
+  var sendControl = null;
+  async function loadSendControl() {
+    try {
+      var d = await api('/api/send-control');
+      sendControl = d.control || {};
+      $('send-paused').checked = !!sendControl.send_paused;
+      $('pause-reason').value = sendControl.pause_reason || '';
+      say('send-control-status', sendControl.send_paused
+        ? '当前已停机：' + (sendControl.pause_reason || '未填原因')
+        : '当前允许发送', !sendControl.send_paused);
+    } catch (e) { say('send-control-status', e.message, false); }
+  }
+  async function saveSendControl() {
+    var paused = $('send-paused').checked;
+    try {
+      var d = await api('/api/send-control', { method: 'PUT', body: {
+        paused: paused, reason: $('pause-reason').value.trim(),
+      } });
+      sendControl = d.control || {};
+      $('send-paused').checked = !!sendControl.send_paused;
+      $('pause-reason').value = sendControl.pause_reason || '';
+      say('send-control-status', sendControl.send_paused
+        ? '已停机：' + (sendControl.pause_reason || '未填原因')
+        : '已恢复发送', !sendControl.send_paused);
+      await loadExecutions();
+    } catch (e) { say('send-control-status', '保存失败：' + e.message, false); }
+  }
+  async function loadExecutions() {
+    try {
+      var d = await api('/api/executions?limit=20');
+      execItems = d.items || [];
+      $('exec-list').innerHTML = execItems.map(function (it) {
+        var gate = it.gate || {};
+        var blocked = gate.allowed === false;
+        var reasonText = (gate.reasons || []).map(function (r) { return r.label; }).join('；');
+        return '<div class="list-item"><div class="li-top"><b>' + esc(it.customer_name || it.customer_key) + '</b>'
+          + '<span class="tag ' + (blocked ? 'warn' : '') + '">' + (blocked ? '已阻断' : '待发送') + '</span></div>'
+          + '<div class="li-sub">' + esc(it.country || '') + ' · ' + esc(it.subject || '') + '</div>'
+          + '<div class="li-sub" style="white-space:normal">' + esc((it.draft_text || '').slice(0, 90)) + '</div>'
+          + (blocked ? '<div class="li-sub" style="white-space:normal;color:#b45309">' + esc(reasonText) + '</div>' : '')
+          + '<div style="margin-top:6px"><button class="sm" data-copy="' + it.id + '">复制话术</button> '
+          + '<button class="sm ghost" data-sent="' + it.id + '"' + (blocked ? ' disabled title="云端已阻断，不能标记发送"' : '') + '>标记已发送</button></div></div>';
+      }).join('') || '<p class="hint">暂无待执行项（在「待人工介入」通过一条草稿后出现）</p>';
+      say('exec-status', (d.store_paused ? '店铺已停机；' : '') + '共 ' + execItems.length + ' 条待执行'
+        + (d.blocked_count ? '，其中 ' + d.blocked_count + ' 条被阻断' : ''));
+    } catch (e) { say('exec-status', e.message, false); }
+  }
+  async function markSent(id) {
+    try {
+      await api('/api/executions/' + id + '/result', { method: 'POST', body: { status: 'sent', note: 'cloud-console' } });
+      await loadExecutions();
+    } catch (e) { say('exec-status', e.message, false); }
+  }
+
+  async function boot() {
+    await loadAgents();
+    await loadSuggestions();
+    await loadSendControl();
+    await loadExecutions();
+    await loadThreads();
+  }
+  $('login-btn').onclick = login;
+  $('login-password').addEventListener('keydown', function (e) { if (e.key === 'Enter') login(); });
+  $('to-agents').onclick = function () { location.href = '/agents'; };
+  $('send').onclick = send;
+  $('input').addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+  $('esc-submit').onclick = resolveEscalation;
+  $('esc-later').onclick = function () { $('esc-box').classList.add('hidden'); };
+  $('new-thread').onclick = createThread;
+  $('sug-gen').onclick = generateSuggestions;
+  $('open-ali').onclick = $('open-ali-top').onclick = function () { window.open('https://message.alibaba.com/', '_blank', 'noopener'); };
+  $('exec-refresh').onclick = loadExecutions;
+  $('send-pause-save').onclick = saveSendControl;
+  $('exec-list').addEventListener('click', async function (e) {
+    var copy = e.target.getAttribute('data-copy');
+    var sent = e.target.getAttribute('data-sent');
+    if (copy) {
+      var it = execItems.filter(function (x) { return x.id === copy; })[0];
+      try { await navigator.clipboard.writeText((it && it.draft_text) || ''); say('exec-status', '已复制，去阿里窗口粘贴', true); }
+      catch (err) { say('exec-status', '复制失败，请手动选中', false); }
+    }
+    if (sent) await markSent(sent);
+  });
+  $('thread-list').addEventListener('click', function (e) {
+    var el = e.target.closest('[data-thread]');
+    if (el) openThread(el.getAttribute('data-thread'));
+  });
+  $('sug-list').addEventListener('click', async function (e) {
+    var acc = e.target.getAttribute('data-accept');
+    var rej = e.target.getAttribute('data-reject');
+    try {
+      if (acc) await api('/api/suggestions/' + acc + '/accept', { method: 'POST' });
+      if (rej) await api('/api/suggestions/' + rej + '/reject', { method: 'POST' });
+      await loadSuggestions();
+    } catch (err) { say('sug-status', err.message, false); }
+  });
+  (async function () {
+    if (!token) { gate(false); return; }
+    try {
+      var me = await api('/auth/me');
+      if (me.role !== 'admin' || !me.employee) throw new Error('not_admin');
+      $('who').textContent = '当前：' + me.employee.email + '（点击退出）';
+      $('who').onclick = function () { sessionStorage.removeItem(TOKEN_KEY); token = ''; gate(false); };
+      gate(true); await boot();
+    } catch (e) { gate(false); }
+  })();
+})();
+</script>
+</body>
+</html>

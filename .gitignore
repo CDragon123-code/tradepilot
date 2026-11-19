@@ -1,20 +1,46 @@
-# 依赖与构建产物
+# Dependencies and build output
 node_modules/
 dist/
 *.zip
 
-# 导出的数据文件（含客户信息，不入库）
+# Data exports (may contain customer information)
 *.xlsx
 *.csv
-*.json
-!manifest.json
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
 
-# 系统文件
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+!.env.production.example
+*.pem
+*.key
+
+# Logs and temporary files
+*.log
+.cache/
+deploy-tmp/
+.screenshots/
+.e2e/
+
+# Server runtime data
+server/releases/
+server/backups/
+server/data/
+server/collector-data/
+server/deploy/logs/
+
+# Internal business data
+阿里国际站知识库/
+开发日志.md
+
+# OS and editor
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# 编辑器
 .vscode/
 .idea/
-*.log

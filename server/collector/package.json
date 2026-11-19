@@ -1,0 +1,9 @@
+{
+  "name": "ali-collector",
+  "version": "0.1.1",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}

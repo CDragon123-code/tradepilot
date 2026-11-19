@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 智能体 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">AI 服务 / AI 智能体</div>
+      <h1>让 AI 先干活，人只做确认</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>统一人设、统一知识库、统一守门。</h2>
+      <p>智能体负责生成草稿与会话回复；发送与客户沟通仍在扩展里完成。所有 AI 运行与人工介入都会留痕。</p>
+      <div class="login-steps"><span>01 配置智能体</span><span>02 生成草稿</span><span>03 人工确认</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">仅管理员可配置智能体与查看运行审计。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">AI 简报</span><p id="briefing-text">正在读取 AI 智能体状态…</p></div>
+      <span id="ai-badge" class="quality-badge">读取中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <div id="ai-tabs" class="tabs page-tabs"></div>
+
+    <section id="denied" class="card hidden">
+      <h2>仅管理员可访问</h2>
+      <p class="muted">当前身份不是管理员，无法配置智能体或查看 AI 运行审计。</p>
+    </section>
+
+    <div id="panel-overview" class="admin-panel">
+      <div class="focus-grid">
+        <section class="card" aria-labelledby="ai-meta-title">
+          <div class="section-head">
+            <div><span class="eyebrow">能力状态</span><h2 id="ai-meta-title">AI 配置与用量</h2></div>
+            <span class="section-note">平台共用 Dify 知识库</span>
+          </div>
+          <div id="ai-meta" class="meta-grid"></div>
+        </section>
+
+        <section class="card" aria-labelledby="guard-title">
+          <div class="section-head">
+            <div><span class="eyebrow">发布前检查</span><h2 id="guard-title">守门规则</h2></div>
+            <span class="section-note">block 命中转人工</span>
+          </div>
+          <div class="table-scroll">
+            <table id="guard-rules"><thead><tr><th>规则</th><th>代码</th><th>级别</th></tr></thead><tbody></tbody></table>
+          </div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="recent-runs-title">
+        <div class="section-head">
+          <div><span class="eyebrow">最近运行</span><h2 id="recent-runs-title">AI 执行记录</h2></div>
+          <span class="section-note">草稿生成与会话回合</span>
+        </div>
+        <div class="table-scroll">
+          <table id="recent-runs"><thead><tr><th>时间</th><th>类型</th><th>智能体</th><th>状态</th><th>模型</th><th>耗时</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <div id="panel-agents" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">人设与节奏</span><h2 id="agent-form-title">新建智能体</h2></div>
+          <span class="section-note">人设会前置到统一提示词</span>
+        </div>
+        <div class="form-grid">
+          <label>名称<input id="ag-name" type="text" placeholder="例如 TradePilot 首响助手"></label>
+          <label>回复语言
+            <select id="ag-language">
+              <option value="en">英文 en</option>
+              <option value="zh">中文 zh</option>
+            </select>
+          </label>
+          <label>模型备注<input id="ag-model" type="text" placeholder="留空使用平台默认"></label>
+          <label>每日上限<input id="ag-limit" type="number" min="1" value="20"></label>
+          <label>同客户冷却（小时）<input id="ag-cooldown" type="number" min="0" value="24"></label>
+          <label>静默开始<input id="ag-quiet-start" type="text" value="23:00"></label>
+          <label>静默结束<input id="ag-quiet-end" type="text" value="07:00"></label>
+          <label>时区偏移（分钟）<input id="ag-tz" type="number" value="480"></label>
+        </div>
+        <label class="persona-field">人设 / 语气
+          <textarea id="ag-persona" placeholder="例如：你是 TradePilot 的资深外贸业务员，语气专业简洁，英文回复，先确认需求再提问。"></textarea>
+        </label>
+        <div class="todo-actions">
+          <button id="ag-save" class="primary" type="button">创建智能体</button>
+          <button id="ag-cancel" class="secondary hidden" type="button">取消编辑</button>
+        </div>
+        <p id="ag-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">团队</span><h2>智能体列表</h2></div>
+          <span class="section-note">停用后不参与分配与生成</span>
+        </div>
+        <div class="table-scroll">
+          <table id="agent-rows"><thead><tr><th>智能体</th><th>语言</th><th>发送节奏</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">客户归属</span><h2>分配客户</h2></div>
+          <span class="section-note">DNC 客户自动排除</span>
+        </div>
+        <div class="form-grid">
+          <label>智能体<select id="assign-agent"></select></label>
+          <label>国家（可选）<input id="as-country" type="text" placeholder="美国"></label>
+          <label>买家等级（可选）<input id="as-grade" type="text" placeholder="L3"></label>
+          <label>回复状态（可选）<input id="as-replied" type="text" placeholder="待回复"></label>
+          <label>数量上限<input id="as-limit" type="number" min="1" value="50"></label>
+        </div>
+        <div class="todo-actions">
+          <button id="as-assign" class="primary" type="button">分配客户</button>
+          <button id="as-list" class="secondary" type="button">查看已分配</button>
+          <button id="as-clear" class="secondary" type="button">清空分配</button>
+        </div>
+        <p id="as-status" class="status-line"></p>
+        <div id="as-result"></div>
+      </section>
+    </div>
+
+    <div id="panel-tasks" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">首响队列</span><h2>任务与草稿</h2></div>
+          <span class="section-note">按智能体生成，可逐条确认</span>
+        </div>
+        <div class="filter-bar">
+          <select id="task-agent"></select>
+          <button id="task-create" type="button">用该智能体建任务</button>
+          <select id="task-select"></select>
+          <button id="task-refresh" class="secondary" type="button">刷新任务项</button>
+        </div>
+        <p id="task-status" class="status-line"></p>
+        <div class="table-scroll">
+          <table id="task-items"><thead><tr><th>客户</th><th>国家</th><th>主题</th><th>状态</th><th>草稿</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+      <section id="item-detail" class="card hidden"></section>
+    </div>
+
+    <div id="panel-human" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">守门升级</span><h2>升级单</h2></div>
+          <span class="section-note">block 命中后等待人工结论</span>
+        </div>
+        <div class="table-scroll">
+          <table id="escalations"><thead><tr><th>客户</th><th>主题</th><th>智能体</th><th>原因</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+        <p id="escalation-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">草稿确认</span><h2>待审核草稿</h2></div>
+          <span class="section-note">守门命中优先排前</span>
+        </div>
+        <div class="table-scroll">
+          <table id="review-rows"><thead><tr><th>客户</th><th>主题</th><th>风险</th><th>草稿</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+        <p id="review-status" class="status-line"></p>
+      </section>
+
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">分配建议</span><h2>待确认建议</h2></div>
+          <span class="section-note">接受后写入客户归属</span>
+        </div>
+        <div class="table-scroll">
+          <table id="suggestion-rows"><thead><tr><th>客户</th><th>智能体</th><th>评分</th><th>理由</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+        <p id="suggestion-status" class="status-line"></p>
+      </section>
+    </div>
+
+    <div id="panel-runs" class="admin-panel hidden">
+      <section class="card">
+        <div class="section-head">
+          <div><span class="eyebrow">AI 审计</span><h2>运行记录</h2></div>
+          <span class="section-note">最近 100 条，按时间倒序</span>
+        </div>
+        <div class="filter-bar">
+          <select id="runs-kind">
+            <option value="">全部类型</option>
+            <option value="draft">草稿生成</option>
+            <option value="chat">会话回合</option>
+          </select>
+          <select id="runs-state">
+            <option value="">全部状态</option>
+            <option value="ok">ok</option>
+            <option value="error">error</option>
+            <option value="failed">failed</option>
+            <option value="blocked">blocked</option>
+          </select>
+          <button id="runs-refresh" class="secondary" type="button">刷新</button>
+        </div>
+        <div class="table-scroll">
+          <table id="run-rows"><thead><tr><th>时间</th><th>类型</th><th>智能体</th><th>状态</th><th>模型</th><th>耗时</th><th>Tokens</th><th>错误</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/agents.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

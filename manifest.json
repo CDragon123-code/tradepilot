@@ -1,9 +1,17 @@
 {
   "manifest_version": 3,
   "name": "外贸助手 · 员工工作台",
-  "version": "0.32.0",
-  "description": "智能客服接入 Dify 知识库，自动过滤思考过程，并拦截报价、交期、站外联系方式等高风险草稿。",
-  "permissions": ["downloads", "scripting", "storage", "unlimitedStorage", "cookies", "alarms"],
+  "version": "0.35.25",
+  "description": "支持扩展内「检查更新」一键连接云端升级；右侧各功能面板关闭后重开可恢复任务状态；展会通知支持按国家筛选客户库并生成话术；智能客服接入 Dify 知识库。",
+  "permissions": [
+    "downloads",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "cookies",
+    "alarms",
+    "sidePanel"
+  ],
   "host_permissions": [
     "https://*.alibaba.com/*",
     "https://alibaba.com/*",
@@ -19,7 +27,8 @@
     "https://open.bigmodel.cn/*",
     "https://api.dify.ai/*",
     "http://127.0.0.1:39271/*",
-    "http://127.0.0.1:39272/*"
+    "http://127.0.0.1:39272/*",
+    "http://127.0.0.1:17878/*"
   ],
   "optional_host_permissions": [
     "https://*/*",
@@ -35,24 +44,37 @@
   "content_scripts": [
     {
       "matches": [
-        "https://message.alibaba.com/*",
-        "https://onetalk.alibaba.com/*",
-        "https://alicrm.alibaba.com/*",
-        "https://i.alibaba.com/hub/alicrm/*",
-        "https://biz.alibaba.com/*",
-        "https://data.alibaba.com/*"
+        "https://*.alibaba.com/*",
+        "https://alibaba.com/*"
       ],
-      "css": ["src/workbench.css"],
-      "js": ["vendor/xlsx.full.min.js", "src/identity.js", "src/platform-job.js", "src/sync-state.js", "src/content.js"],
+      "css": [
+        "src/workbench.css"
+      ],
+      "js": [
+        "vendor/xlsx.full.min.js",
+        "src/identity.js",
+        "src/order-match.js",
+        "src/platform-job.js",
+        "src/sync-state.js",
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://i.alibaba.com/ads/*", "https://www2.alibaba.com/ads/*"],
-      "js": ["src/ads-collector.js"],
+      "matches": [
+        "https://i.alibaba.com/ads/*",
+        "https://www2.alibaba.com/ads/*"
+      ],
+      "js": [
+        "src/ads-collector.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "action": {
     "default_title": "外贸助手 · 员工工作台"
+  },
+  "side_panel": {
+    "default_path": "executor.html"
   }
 }

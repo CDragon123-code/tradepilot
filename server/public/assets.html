@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据资产 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / 数据资产</div>
+      <h1>每一类数据，有哪些字段可用</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>先看清数据资产，再谈分析和自动化。</h2>
+      <p>这里按数据源展示字段覆盖率、样本记录与同步新鲜度；字段口径以扩展写入的当前态为准。</p>
+      <div class="login-steps"><span>01 选数据源</span><span>02 看字段覆盖</span><span>03 核对样本</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">使用员工账号或管理员账号进入。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">资产简报</span><p id="briefing-text">正在读取云端数据资产…</p></div>
+      <span id="asset-badge" class="quality-badge">读取中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <section class="card" aria-label="数据源切换">
+      <div class="asset-toolbar">
+        <div id="kind-tabs" class="tabs"></div>
+        <span class="section-note">字段覆盖率基于等距抽样</span>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="fields-title">
+      <div class="section-head">
+        <div><span class="eyebrow">字段字典</span><h2 id="fields-title">字段覆盖率</h2></div>
+        <span id="fields-note" class="section-note">等待样本</span>
+      </div>
+      <div class="table-scroll">
+        <table id="fields"><thead><tr><th>字段</th><th>非空数</th><th>覆盖率</th><th>示例值</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="samples-title">
+      <div class="section-head">
+        <div><span class="eyebrow">样本核对</span><h2 id="samples-title">样本记录</h2></div>
+        <button id="export" class="secondary" type="button">导出当前样本 CSV</button>
+      </div>
+      <p id="samples-note" class="section-note samples-note">等待样本</p>
+      <div class="table-scroll">
+        <table id="samples"><thead><tr><th>—</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/assets.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

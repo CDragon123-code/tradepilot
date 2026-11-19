@@ -30,6 +30,7 @@ body { color: var(--ink); background: #f4f7fb; font: 14px/1.6 "Microsoft YaHei",
 .app-topbar #page-title { color: #264263; font-weight: 700; }
 .app-topbar .data-link { padding: 7px 11px; border: 1px solid #cddff9; border-radius: 8px; color: #1753ab; background: #f1f6ff; font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
 .app-topbar .data-link:hover { background: #e4efff; }
+.app-topbar button.data-link { font-family: inherit; cursor: pointer; margin-left: auto; }
 .platform-sync-banner { position: sticky; top: 62px; z-index: 19; margin: 0; padding: 10px 30px 12px; border-bottom: 1px solid #d8e6f8; background: #f4f8ff; color: #20466f; box-shadow: 0 5px 12px rgba(22, 56, 99, .05); }
 .platform-sync-banner[hidden] { display: none; }
 .platform-sync-heading { display: flex; align-items: center; gap: 10px; font-size: 12px; }
@@ -98,6 +99,24 @@ pre.advice { background: #f7faff; border-color: #e0e9f5; }
 .warn { border-left-color: #c4423a; color: #9e312c; }
 #modal { border: 1px solid #dce6f1; border-radius: 14px; box-shadow: 0 25px 80px rgba(19, 41, 70, .25); }
 .toast { border-radius: 9px; background: #203b5c; }
+.card .v { overflow-wrap: anywhere; }
+.funnel-row { display: grid; grid-template-columns: 88px 1fr 104px; align-items: center; gap: 10px; margin-top: 15px; }
+.funnel-label { color: #40556f; font-size: 12px; font-weight: 600; }
+.funnel-bar { height: 26px; border-radius: 7px; background: #eef3fa; overflow: hidden; }
+.funnel-bar i { display: block; height: 100%; border-radius: 7px; background: linear-gradient(90deg, #4a8ae8, #1858c9); }
+.funnel-meta { display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; color: #536780; font-size: 12px; }
+.funnel-meta b { color: #1c385c; font-size: 16px; }
+.funnel-hint { margin: 3px 0 0 98px; color: #8797aa; font-size: 10px; }
+.q-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 2px; border-bottom: 1px solid #edf1f6; font-size: 12px; }
+.q-row:last-child { border-bottom: 0; }
+.q-row b { color: #253d5a; white-space: nowrap; }
+.q-num { color: #b45309; font-weight: 700; }
+.expo-check { display: flex; align-items: center; gap: 6px; color: #40556f; font-size: 12px; font-weight: 600; }
+.expo-check input[type="checkbox"] { width: auto; min-height: auto; }
+.expo-field { display: flex; flex-direction: column; gap: 5px; color: #40556f; font-size: 12px; font-weight: 700; }
+.expo-field input { font-weight: 400; }
+.expo-template { width: 100%; min-height: 118px; padding: 9px 11px; border: 1px solid #cbd8e8; border-radius: 9px; color: #253d5a; font: 13px/1.65 "Microsoft YaHei", "PingFang SC", sans-serif; resize: vertical; }
+.expo-template:focus-visible { outline: 3px solid #8bb8f8; outline-offset: 2px; }
 .import-guide { margin-bottom: 12px; }
 .import-guide b { color: #1c385c; }
 .import-guide .bar { margin-top: 9px; }

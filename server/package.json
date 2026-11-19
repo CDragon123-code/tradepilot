@@ -1,0 +1,22 @@
+{
+  "name": "ali-cloud-api",
+  "version": "0.13.21",
+  "private": true,
+  "description": "云端最小数据平台：导入契约、当前态与变更查询",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node src/migrate-cli.js",
+    "bench": "node src/bench-commit.js",
+    "alert": "node src/alert-cli.js",
+    "reminder": "node src/reminder-cli.js",
+    "user": "node src/user-cli.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

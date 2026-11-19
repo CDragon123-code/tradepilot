@@ -6,6 +6,13 @@
 (function () {
   'use strict';
   const CORE = typeof self !== 'undefined' ? self.AliDataCore : require('./data-core');
+  const identityApi = () => {
+    if (typeof self !== 'undefined' && self.AliIdentity) return self.AliIdentity;
+    if (typeof require === 'function') {
+      try { return require('./identity'); } catch (e) { return null; }
+    }
+    return null;
+  };
 
   const TIER_ORDER = ['L0', 'L1', 'L2', 'L3', 'L4'];
   const TIER_MEAN = { L0: '注册买家', L1: '潜力买家', L2: '小B买家', L3: '企业类买家', L4: '金标买家' };
@@ -423,6 +430,203 @@ el la de en es al lo su sus me nos le les te tu mi
     };
   }
 
+  // ---------------- 展会通知 ----------------
+  // 按国家筛选客户，合并我的客户/公海/询盘，输出可核对的联系人与最近询盘；不自动发送。
+  const COUNTRY_ALIASES = {
+    portugal: 'portugal', '葡萄牙': 'portugal', pt: 'portugal',
+    spain: 'spain', '西班牙': 'spain', es: 'spain',
+    germany: 'germany', '德国': 'germany', de: 'germany',
+    france: 'france', '法国': 'france', fr: 'france',
+    italy: 'italy', '意大利': 'italy', it: 'italy',
+    netherlands: 'netherlands', '荷兰': 'netherlands', nl: 'netherlands',
+    poland: 'poland', '波兰': 'poland', pl: 'poland',
+    unitedkingdom: 'uk', uk: 'uk', greatbritain: 'uk', england: 'uk', '英国': 'uk',
+    unitedstates: 'usa', unitedstatesofamerica: 'usa', usa: 'usa', us: 'usa', '美国': 'usa',
+    canada: 'canada', '加拿大': 'canada', ca: 'canada',
+    mexico: 'mexico', '墨西哥': 'mexico', mx: 'mexico',
+    brazil: 'brazil', '巴西': 'brazil', br: 'brazil',
+    argentina: 'argentina', '阿根廷': 'argentina', ar: 'argentina',
+    chile: 'chile', '智利': 'chile', cl: 'chile',
+    peru: 'peru', '秘鲁': 'peru', pe: 'peru',
+    colombia: 'colombia', '哥伦比亚': 'colombia', co: 'colombia',
+    russia: 'russia', '俄罗斯': 'russia', ru: 'russia',
+    turkey: 'turkey', '土耳其': 'turkey', tr: 'turkey',
+    uae: 'uae', unitedarabemirates: 'uae', '阿联酋': 'uae', ae: 'uae',
+    saudiarabia: 'saudi', '沙特阿拉伯': 'saudi', sa: 'saudi',
+    india: 'india', '印度': 'india', 'in': 'india',
+    pakistan: 'pakistan', '巴基斯坦': 'pakistan', pk: 'pakistan',
+    vietnam: 'vietnam', '越南': 'vietnam', vn: 'vietnam',
+    thailand: 'thailand', '泰国': 'thailand', th: 'thailand',
+    indonesia: 'indonesia', '印度尼西亚': 'indonesia', id: 'indonesia',
+    malaysia: 'malaysia', '马来西亚': 'malaysia', my: 'malaysia',
+    japan: 'japan', '日本': 'japan', jp: 'japan',
+    southkorea: 'korea', korea: 'korea', '韩国': 'korea', kr: 'korea',
+    australia: 'australia', '澳大利亚': 'australia', au: 'australia',
+    egypt: 'egypt', '埃及': 'egypt', eg: 'egypt',
+    southafrica: 'southafrica', '南非': 'southafrica', za: 'southafrica',
+    morocco: 'morocco', '摩洛哥': 'morocco', ma: 'morocco',
+    nigeria: 'nigeria', '尼日利亚': 'nigeria', ng: 'nigeria',
+    kenya: 'kenya', '肯尼亚': 'kenya', ke: 'kenya',
+  };
+  const COUNTRY_LABELS = {
+    portugal: '葡萄牙 / Portugal', spain: '西班牙 / Spain', germany: '德国 / Germany',
+    france: '法国 / France', italy: '意大利 / Italy', netherlands: '荷兰 / Netherlands',
+    poland: '波兰 / Poland', uk: '英国 / United Kingdom', usa: '美国 / United States',
+    canada: '加拿大 / Canada', mexico: '墨西哥 / Mexico', brazil: '巴西 / Brazil',
+    argentina: '阿根廷 / Argentina', chile: '智利 / Chile', peru: '秘鲁 / Peru',
+    colombia: '哥伦比亚 / Colombia', russia: '俄罗斯 / Russia', turkey: '土耳其 / Turkey',
+    uae: '阿联酋 / UAE', saudi: '沙特阿拉伯 / Saudi Arabia', india: '印度 / India',
+    pakistan: '巴基斯坦 / Pakistan', vietnam: '越南 / Vietnam', thailand: '泰国 / Thailand',
+    indonesia: '印度尼西亚 / Indonesia', malaysia: '马来西亚 / Malaysia', japan: '日本 / Japan',
+    korea: '韩国 / South Korea', australia: '澳大利亚 / Australia', egypt: '埃及 / Egypt',
+    southafrica: '南非 / South Africa', morocco: '摩洛哥 / Morocco', nigeria: '尼日利亚 / Nigeria',
+    kenya: '肯尼亚 / Kenya',
+  };
+  const countryKeyOf = (raw) => {
+    const s = String(raw === undefined || raw === null ? '' : raw).trim();
+    if (!s || s === '-') return '';
+    const n = s.toLowerCase().replace(/[\s\u3000._\-()（）]+/g, '');
+    return COUNTRY_ALIASES[n] || n;
+  };
+  const countryLabelOf = (raw, key) => {
+    if (!key) return '未填写';
+    return COUNTRY_LABELS[key] || String(raw === undefined || raw === null ? '' : raw).trim();
+  };
+
+  function exhibition(data, country, opts) {
+    const o = opts || {};
+    const inv = data.inquiry || [];
+    const mine = data.customer || [];
+    const pub = data.public_customer || [];
+    const ID = identityApi();
+    const IDX = o.idx || (ID && ID.build ? ID.build(data) : null);
+    if (!IDX) {
+      return { country: '', countries: [], totalProfiles: 0, missingCountry: 0, matched: 0,
+        withEmail: 0, withPhone: 0, hotCount: 0, rows: [], truncated: false };
+    }
+    const wanted = countryKeyOf(country);
+
+    const latestInv = new Map();
+    inv.forEach((x) => {
+      const uid = IDX.uidOfInquiry(x);
+      if (!uid) return;
+      const at = toDt(val(x, '创建时间'));
+      const saved = latestInv.get(uid);
+      if (!saved || (at && (!saved.at || at > saved.at))) latestInv.set(uid, { row: x, at });
+    });
+    const mineByUid = new Map();
+    mine.forEach((r) => {
+      const uid = IDX.uidOfCustomer(r);
+      if (uid && !mineByUid.has(uid)) mineByUid.set(uid, r);
+    });
+    const pubByUid = new Map();
+    pub.forEach((r) => {
+      const uid = IDX.uidOfCustomer(r);
+      if (uid && !pubByUid.has(uid)) pubByUid.set(uid, r);
+    });
+
+    const countryCount = new Map();
+    let missingCountry = 0;
+    IDX.profiles.forEach((p) => {
+      const key = countryKeyOf(p.country);
+      if (!key) { missingCountry += 1; return; }
+      const saved = countryCount.get(key);
+      if (saved) saved.count += 1;
+      else countryCount.set(key, { key, label: countryLabelOf(p.country, key), count: 1 });
+    });
+    const countries = Array.from(countryCount.values())
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    if (o.countriesOnly) {
+      return {
+        country: wanted ? countryLabelOf(country, wanted) : '全部国家',
+        countries: countries,
+        totalProfiles: IDX.profiles.length,
+        missingCountry: missingCountry,
+        matched: 0, withEmail: 0, withPhone: 0, hotCount: 0,
+        rows: [], truncated: false,
+      };
+    }
+
+    const rows = [];
+    IDX.profiles.forEach((p) => {
+      const mineRow = mineByUid.get(p.uid) || null;
+      const pubRow = pubByUid.get(p.uid) || null;
+      const invHit = latestInv.get(p.uid) || null;
+      const invRow = invHit ? invHit.row : null;
+      const contacts = [mineRow, pubRow, invRow].filter(Boolean);
+      const pickField = (keys) => {
+        for (const row of contacts) {
+          for (const k of keys) {
+            const v = val(row, k);
+            if (v) return v;
+          }
+        }
+        return '';
+      };
+      const countryRaw = p.country || (mineRow && val(mineRow, '国家/地区'))
+        || (pubRow && val(pubRow, '国家/地区')) || (invRow && val(invRow, '国家')) || '';
+      const key = countryKeyOf(countryRaw);
+      if (wanted && key !== wanted) return;
+      if (o.mineOnly && !p.mineCount) return;
+
+      const email = pickField(['邮箱', '电子邮件']);
+      const phone = pickField(['手机', '电话', '联系电话']);
+      const contactName = pickField(['联系人', '客户名称']);
+      const company = p.company || pickField(['公司名称']);
+      const login = pickField(['登录名', '客户登录名', 'AliID', '旺旺']);
+      const crmTier = (mineRow && custTier(mineRow)) || (pubRow && custTier(pubRow)) || '';
+      const tier = crmTier && crmTier !== '-' ? crmTier : (invRow ? invGrade(invRow) : '-');
+      const hot = !!((mineRow && isHotCustomer(mineRow)) || (pubRow && isHotCustomer(pubRow))
+        || (invRow && isHotInquiry(invRow)));
+      if (o.hotOnly && !hot) return;
+      if (o.contactOnly && !email && !phone) return;
+
+      const sources = [];
+      if (p.mineCount) sources.push('我的客户');
+      if (p.publicCount) sources.push('公海');
+      if (p.inquiryIds.length) sources.push('询盘');
+      rows.push({
+        uid: p.uid,
+        name: contactName || p.display || '未命名客户',
+        company: company || '',
+        country: countryLabelOf(countryRaw, key),
+        countryKey: key,
+        tier: tier || '-',
+        member: (mineRow && val(mineRow, '会员等级')) || (pubRow && val(pubRow, '会员等级')) || '-',
+        sources: sources.join(' + ') || '客户',
+        email: email,
+        phone: phone,
+        login: login,
+        inquiryId: invRow ? val(invRow, '询盘ID') : '',
+        inquiryAt: invRow ? fmtDT(toDt(val(invRow, '创建时间'))) : '',
+        subject: invRow ? val(invRow, '询盘主题') : '',
+        product: invRow ? val(invRow, '咨询产品') : '',
+        owner: invRow ? val(invRow, '负责人') : '',
+        inquiryCount: p.inquiryIds.length,
+        customerId: p.customerIds[0] || '',
+        hot: hot,
+        risk: mineRow ? ['y', 'Y', '是'].indexOf(val(mineRow, '流失预警')) >= 0 : false,
+      });
+    });
+
+    rows.sort((a, b) => (b.hot ? 1 : 0) - (a.hot ? 1 : 0)
+      || String(b.inquiryAt).localeCompare(String(a.inquiryAt))
+      || String(a.name).localeCompare(String(b.name)));
+    const limit = Math.max(0, Number(o.limit) || 0);
+    return {
+      country: wanted ? countryLabelOf(country, wanted) : '全部国家',
+      countries: countries,
+      totalProfiles: IDX.profiles.length,
+      missingCountry: missingCountry,
+      matched: rows.length,
+      withEmail: rows.filter((r) => r.email).length,
+      withPhone: rows.filter((r) => r.phone).length,
+      hotCount: rows.filter((r) => r.hot).length,
+      rows: limit ? rows.slice(0, limit) : rows,
+      truncated: limit ? rows.length > limit : false,
+    };
+  }
+
   // ---------------- 需求词库 ----------------
   function demand(data) {
     const vis = data.visitor || [];
@@ -575,8 +779,135 @@ el la de en es al lo su sus me nos le les te tu mi
     return { sections, generatedAt: fmtDT(new Date(), true) };
   }
 
+  // ---------------- 经营总览 ----------------
+  // 只汇总本机已导入的六类资料；成交额按币种分开累计，订单数不等于询盘去重数。
+  function storeOverview(data, at) {
+    const inv = data.inquiry || [];
+    const orders = data.order || [];
+    const mine = data.customer || [];
+    const pub = data.public_customer || [];
+    const visitors = data.visitor || [];
+    const now = at ? new Date(at) : new Date();
+    const m2 = (x) => (x === null || x === undefined || isNaN(x) ? null : Math.round(x * 10) / 10);
+    const pct = (n, d) => (d ? Math.round((n / d) * 1000) / 10 : null);
+    const after = (v, days) => {
+      const d = toDt(v);
+      if (!d || d > now) return false;
+      return d.getTime() >= now.getTime() - days * 86400000;
+    };
+    const isReplied = (x) => {
+      const s = val(x, '回复状态');
+      if (!s) return !!val(x, '最新回复时间');
+      return s.indexOf('已回复') >= 0 || s === '1';
+    };
+    const inv30 = inv.filter((x) => after(val(x, '创建时间'), 30));
+    const repliedInv = inv.filter(isReplied);
+    const addedInv = inv.filter((x) => val(x, '是否已加为客户') === '是');
+    const pending = inv.filter((x) => toNum(val(x, '未联系天数')) > 0);
+    const confirmed = orders.filter(CORE.wonOrder);
+
+    const amounts = new Map();
+    confirmed.forEach((o) => {
+      const n = CORE.amount(o['成交金额']);
+      if (n === null) return;
+      const currency = val(o, '币种') || '未标注币种';
+      amounts.set(currency, (amounts.get(currency) || 0) + n);
+    });
+    const gmv = Array.from(amounts, ([currency, n]) => ({ currency, amount: Math.round(n * 100) / 100 }))
+      .sort((a, b) => b.amount - a.amount);
+    const gmvText = gmv.length
+      ? gmv.map((x) => (x.currency === '未标注币种' ? '' : x.currency + ' ')
+        + x.amount.toLocaleString('en-US', { maximumFractionDigits: 2 })).join(' / ')
+      : '0';
+
+    const resp = inv.map((x) => respMinutes(x)).filter((n) => n !== null);
+    const avgResp = resp.length ? m2(resp.reduce((a, b) => a + b, 0) / resp.length) : null;
+    const visitorIds = new Set(visitors.map((v) => val(v, '访客ID')).filter(Boolean));
+    const visitorTotal = visitorIds.size || visitors.length;
+    const visitorWithTerms = visitors.filter((v) => val(v, '搜索关键词') || val(v, '进店来源词')).length;
+    const visitorValue = (visitors.length || data.visitorSnapshot) ? visitorTotal : '未入库';
+
+    const kpis = [
+      ['近30天询盘', inv30.length, '创建时间在近30天；全部已导入 ' + inv.length + ' 条'],
+      ['平台回复率', pct(repliedInv.length, inv.length) === null ? '暂无' : pct(repliedInv.length, inv.length) + '%',
+        '回复状态=已回复 ' + repliedInv.length + '/' + inv.length],
+      ['已加客户', addedInv.length, '占询盘 ' + (pct(addedInv.length, inv.length) === null ? '—' : pct(addedInv.length, inv.length) + '%')],
+      ['已确认订单', confirmed.length, '已付款/已完成；全部订单 ' + orders.length + ' 笔'],
+      ['已确认成交额', gmvText, '按币种分开累计，不跨币种相加'],
+      ['平均响应', avgResp === null ? '暂无' : avgResp + ' 分钟', '创建时间→最新回复时间；' + resp.length + ' 条有完整时间'],
+      ['我的客户', mine.length, '公海客户 ' + pub.length],
+      ['待跟进', pending.length, '未联系天数>0，需按今日待办核实'],
+      ['访客数', visitorValue, visitors.length ? '本机访客快照；有搜索词 ' + visitorWithTerms + ' 人' : '访客资料未入库或为空'],
+    ];
+
+    const funnel = [
+      { key: 'inquiry', label: '询盘', count: inv.length, rate: inv.length ? 100 : null, hint: '本机已导入询盘' },
+      { key: 'replied', label: '已回复', count: repliedInv.length, rate: pct(repliedInv.length, inv.length), hint: '平台回复状态=已回复' },
+      { key: 'added', label: '已加客户', count: addedInv.length, rate: pct(addedInv.length, inv.length), hint: '询盘「是否已加为客户=是」' },
+      { key: 'order', label: '已确认订单', count: confirmed.length, rate: pct(confirmed.length, inv.length), hint: '订单数，非询盘去重' },
+    ];
+
+    const trend = [];
+    const monthKey = (d) => d.getFullYear() + '-' + pad(d.getMonth() + 1);
+    for (let i = 5; i >= 0; i--) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      trend.push({ month: monthKey(start), label: (start.getMonth() + 1) + '月', inquiries: 0, orders: 0 });
+    }
+    const trendIndex = new Map(trend.map((t, i) => [t.month, i]));
+    inv.forEach((x) => {
+      const d = toDt(val(x, '创建时间'));
+      if (!d) return;
+      const i = trendIndex.get(monthKey(d));
+      if (i !== undefined) trend[i].inquiries++;
+    });
+    confirmed.forEach((o) => {
+      const d = toDt(val(o, '下单时间') || val(o, '创建时间'));
+      if (!d) return;
+      const i = trendIndex.get(monthKey(d));
+      if (i !== undefined) trend[i].orders++;
+    });
+
+    const shareRows = (list, n) => top(counter(list), n).map(([name, count]) => ({
+      name, count, rate: pct(count, list.length),
+    }));
+    const countries = shareRows(inv.map((x) => val(x, '国家') || '-'), 6);
+    const sources = shareRows(inv.map((x) => val(x, '来源') || '-'), 6);
+
+    const quality = [];
+    const addGap = (id, label, count, total, level, hint) => {
+      if (count > 0) quality.push({ id, label, count, total, level, hint });
+    };
+    addGap('name', '询盘缺客户名', inv.filter((x) => !val(x, '客户名称')).length, inv.length, 'high',
+      '无法在聊天与订单中稳定匹配客户，影响身份聚合');
+    addGap('order-link', '订单未关联询盘', orders.filter((o) => !val(o, '询盘ID')).length, orders.length, 'high',
+      '影响成交归因、投流回收与客户 LTV 判断');
+    addGap('grade', '买家等级缺失', inv.filter((x) => !val(x, '买家等级')).length, inv.length, 'mid',
+      '影响高价值询盘识别与跟进优先级');
+    addGap('company', '公司名缺失', inv.filter((x) => !val(x, '公司名称')).length, inv.length, 'low',
+      '影响客户去重与背景核实');
+    addGap('visitor-terms', '访客缺搜索词', visitors.filter((v) => !val(v, '搜索关键词') && !val(v, '进店来源词')).length, visitors.length, 'low',
+      '无法还原买家真实搜索需求');
+    const LEVEL_ORDER = { high: 0, mid: 1, low: 2 };
+    quality.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || b.count - a.count);
+
+    const headlineParts = ['近30天新增询盘 ' + inv30.length + ' 条',
+      '平台回复率 ' + (pct(repliedInv.length, inv.length) === null ? '暂无' : pct(repliedInv.length, inv.length) + '%'),
+      '已加客户 ' + addedInv.length + ' 条',
+      '已确认订单 ' + confirmed.length + ' 笔'];
+    if (gmv.length) headlineParts.push('确认成交额 ' + gmvText);
+    const topGaps = quality.filter((q) => q.level !== 'low').slice(0, 2).map((q) => q.label + ' ' + q.count);
+    headlineParts.push(topGaps.length ? '优先补 ' + topGaps.join('、') : '主要资料缺口暂不明显');
+
+    return {
+      headline: headlineParts.join('；') + '。',
+      kpis, funnel, trend, countries, sources, quality, gmv,
+      generatedAt: fmtDT(new Date(), true),
+    };
+  }
+
   const api = { val, toNum, toDt, fmtDT, fmtName, invGrade, custTier, isHotInquiry, isHotCustomer,
-    extractWords, splitTerms, keywordCorpus, home, inquiry, customers, demand, report, TIER_ORDER, TIER_MEAN };
+    extractWords, splitTerms, keywordCorpus, home, inquiry, customers, exhibition, demand, report, storeOverview,
+    TIER_ORDER, TIER_MEAN };
 
   if (typeof self !== 'undefined') self.AliAnalyze = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据质量 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / 数据质量</div>
+      <h1>数据能不能用，一眼看清</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>数据质量决定分析可信度。</h2>
+      <p>这里展示身份归并、字段缺口与同步新鲜度；业务处理仍在扩展里完成。</p>
+      <div class="login-steps"><span>01 看匹配率</span><span>02 补关键字段</span><span>03 再交给扩展</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">使用员工账号或管理员账号进入。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">质量简报</span><p id="briefing-text">正在读取云端数据质量…</p></div>
+      <span id="quality-badge" class="quality-badge">数据核对中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <div class="focus-grid">
+      <section class="card" aria-labelledby="identity-title">
+        <div class="section-head">
+          <div><span class="eyebrow">身份归并</span><h2 id="identity-title">客户与记录匹配</h2></div>
+          <span class="section-note">来自身份层统计</span>
+        </div>
+        <div id="identity" class="meta-grid"></div>
+      </section>
+
+      <section class="card" aria-labelledby="gaps-title">
+        <div class="section-head">
+          <div><span class="eyebrow">字段完整度</span><h2 id="gaps-title">资料缺口</h2></div>
+          <span class="section-note">按影响排序</span>
+        </div>
+        <div class="table-scroll">
+          <table id="gaps"><thead><tr><th>缺口</th><th>数量</th><th>占比</th><th>级别</th><th>建议</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="sources-title">
+      <div class="section-head">
+        <div><span class="eyebrow">新鲜度</span><h2 id="sources-title">数据源状态</h2></div>
+        <span class="section-note">区分同步时间与平台业务时间</span>
+      </div>
+      <div class="table-scroll">
+        <table id="sources"><thead><tr><th>数据源</th><th>当前记录</th><th>最后同步</th><th>最新业务时间</th><th>状态</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="recent-title">
+      <div class="section-head">
+        <div><span class="eyebrow">追溯</span><h2 id="recent-title">最近导入批次</h2></div>
+        <span class="section-note">用于核对数据来源</span>
+      </div>
+      <div class="table-scroll">
+        <table id="recent"><thead><tr><th>批次 ID</th><th>数据源</th><th>写入记录</th><th>提交时间</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/quality.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

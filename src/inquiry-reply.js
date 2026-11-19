@@ -43,7 +43,7 @@
     return (h >>> 0).toString(36);
   }
 
-  // 会话名常带公司后缀，如 "John Smith (Acme Co)"；统一去掉括号内容再做匹配。
+  // 会话名常带公司后缀，如 "John Smith (Acme Dental)"；统一去掉括号内容再做匹配。
   function normalizeName(value) {
     return String(value || '')
       .replace(/[（(][^）)]*[）)]/g, ' ')
@@ -54,17 +54,34 @@
 
   const isMine = (row) => String(row && row['角色'] || '').indexOf('业务员') >= 0;
 
-  // 需求分类（示例）：先判非主营成品，再判主营材料。
-  const FINISHED_RE = /(finished\s+goods|ready[-\s]?made|end\s+products?|complete\s+(?:units?|sets?)|turnkey|成品|整机|现货|代工)/i;
-  const FINISHED_STRICT_RE = /(finished\s+goods|ready[-\s]?made|end\s+products?|成品|整机)/i;
-  const MATERIAL_RE = /(raw\s+materials?|consumables?|materials?|sheets?|原料|材料|耗材)/i;
+  // 需求分类：沿用「假牙客户 · 婉拒回复」已跑通的候选词口径，先判成品假牙，再判义齿材料。
+  const DENTURE_RE = new RegExp([
+    '\\b(dentures?|false\\s+teeth|artificial\\s+teeth|fake\\s+teeth|acrylic\\s+(?:teeth|denture)|denture\\s+(?:base|teeth)|partial\\s+denture|full\\s+denture|removable\\s+denture|dental\\s+prosthe\\w*)\\b',
+    'dentaduras?', 'pr[oó]tesis\\s+dental(?:es)?', 'dientes\\s+postizos',
+    'pr[oó]teses?\\s+dent[aá]ri[ao]s?', 'dentadura\\s+posti[cç]a', 'dentes\\s+posti[cç]os',
+    'dentiers?', 'proth[eè]se\\s+dentaire', 'fausses\\s+dents',
+    'zahnersatz', 'zahnprothesen?', 'k[uü]nstliche\\s+z[aä]hne', 'gebiss',
+    'dentiere', 'protesi\\s+dentale', 'denti\\s+finti',
+    'kunstgebit', 'gebitsprothese', 'valse\\s+tanden',
+    'protez[^\\s]*\\s+z[eę]bow[^\\s]*', 'sztuczne\\s+z[eę]by', 'protez[^\\s]*\\s+dentystyczn[^\\s]*',
+    'зубн[а-яё]*\\s+протез[а-яё]*', 'вставные\\s+зубы', 'съ[её]мн[а-яё]*\\s+протез[а-яё]*', 'штучн[а-яё]*\\s+зуб[а-яё]*',
+    'takma\\s+di[şs]', 'protez\\s+di[şs]', 'damak\\s+protezi',
+    'طقم\\s*أسنان', 'أطقم\\s*أسنان', 'طقم\\s*اسنان', 'أسنان\\s*صناعية',
+    'răng\\s*giả', 'hàm\\s*giả', 'răng\\s*tháo\\s*lắp',
+    'ฟันปลอม', 'ฟันเทียม',
+    'gigi\\s*palsu', 'protesa\\s*gigi', 'gigi\\s*tiruan',
+    '틀니', '의치', '入れ歯', '義歯',
+    '假牙', '义齿', '牙托', '树脂牙', '全口牙', '局部义齿', '活动假牙', '全口义齿',
+  ].join('|'), 'i');
+  const DENTURE_FINISHED_RE = /\b(?:finished\s+dentures?|denture\s+teeth|false\s+teeth|artificial\s+teeth|fake\s+teeth|acrylic\s+teeth|full\s+denture|partial\s+denture|removable\s+denture)\b|假牙成品|义齿加工|树脂牙|全口义齿|局部义齿|活动假牙/i;
+  const DENTURE_TARGET_RE = /\bdenture\s*(?:base|bases)\b|\binvisible\s+denture\b|\bflexible\s+denture\b|\bgingiva\s+mask\b|义齿基托|基托树脂|柔性义齿|牙龈遮蔽/i;
 
   function classifyDemand(value) {
     const text = String(value || '');
     if (!text) return { type: 'other', label: '普通询盘' };
-    if (FINISHED_STRICT_RE.test(text)) return { type: 'mismatch_finished', label: '成品需求（不匹配）' };
-    if (MATERIAL_RE.test(text)) return { type: 'target_material', label: '材料需求（目标）' };
-    if (FINISHED_RE.test(text)) return { type: 'mismatch_finished', label: '成品需求（不匹配）' };
+    if (DENTURE_FINISHED_RE.test(text)) return { type: 'denture_mismatch', label: '成品假牙需求（不匹配）' };
+    if (DENTURE_TARGET_RE.test(text)) return { type: 'denture_material', label: '义齿材料需求（目标）' };
+    if (DENTURE_RE.test(text)) return { type: 'denture_mismatch', label: '成品假牙需求（不匹配）' };
     return { type: 'other', label: '普通询盘' };
   }
 
@@ -262,10 +279,10 @@
     const transcript = (source.transcript || []).slice(-DRAFT_CONTEXT_MESSAGES).map((message) =>
       (message.at || '') + (message.mine ? ' 业务员：' : ' 客户：') + String(message.text || '').slice(0, 400)).join('\n');
     const demandType = source.demand && source.demand.type;
-    const special = demandType === 'mismatch_finished'
-      ? '【特殊场景】客户在咨询非主营的成品。公司不生产、不销售该类成品，也不承接相关加工。用客户语言礼貌说明这块帮不上，最多一句话说明公司主营方向，不推销、不报价、不承诺样品，感谢并祝对方找到合适供应商。不要写成公司声明或法律条款。'
-      : demandType === 'target_material'
-        ? '【特殊场景】客户在咨询主营材料，属于目标需求。确认收到并只提出一个澄清问题；不得报价或承诺交期。'
+    const special = demandType === 'denture_mismatch'
+      ? '【特殊场景】客户在咨询成品假牙/义齿。公司不生产、不销售成品假牙，也不承接假牙加工。用客户语言礼貌说明这块帮不上，最多一句话说明公司做齿科 3D 打印树脂（如义齿基托树脂），不推销、不报价、不承诺样品，感谢并祝对方找到合适供应商。不要写成公司声明或法律条款。'
+      : demandType === 'denture_material'
+        ? '【特殊场景】客户在咨询义齿基托/柔性义齿/牙龈遮蔽等材料，属于目标需求。确认收到并只提出一个澄清问题；不得报价或承诺交期。'
         : '';
     const system = '你是外贸业务员的询盘回复草稿助手。你的输出只是给员工审核的草稿，绝不会被自动发送。\n'
       + '只依据提供的询盘字段、最近聊天记录和公司已确认资料作答。\n'

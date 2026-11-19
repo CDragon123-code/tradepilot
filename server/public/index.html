@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>今日工作台 · 外贸运营平台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">运营工作空间 / 今日工作台</div>
+      <h1>今天先处理什么</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">内部运营工作台</span>
+      <h2>客户线索、待办和数据质量，集中在一个入口。</h2>
+      <p>员工登录后可以处理待办；只读身份可查看分析。所有判断以已同步的数据为准。</p>
+      <div class="login-steps"><span>01 查看今日重点</span><span>02 核对客户资料</span><span>03 处理并回写</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录工作台</h2>
+      <p class="muted">使用员工账号进入日常运营界面。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入工作台</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">今日简报</span><p id="briefing-text">正在整理最新业务数据…</p></div>
+      <span id="quality-badge" class="quality-badge">数据核对中</span>
+    </div>
+    <div id="kpis" class="kpis"></div>
+    <div class="focus-grid">
+      <section class="card todo-panel" aria-labelledby="todo-title">
+        <div class="section-head"><div><span class="eyebrow">优先行动</span><h2 id="todo-title">近 3 天待办 <span id="todo-count" class="count">0</span></h2></div><span class="section-note">处理后即时从列表移除</span></div>
+        <div id="todos" class="todo-list"></div>
+        <details class="resolved-panel"><summary>查看已处理事项 <span id="resolved-count">0</span></summary><div id="resolved" class="todo-list"></div></details>
+        <p id="todo-msg" class="status-line" role="status"></p>
+      </section>
+      <section class="card gap-panel" aria-labelledby="gaps-title">
+        <div class="section-head"><div><span class="eyebrow">分析可信度</span><h2 id="gaps-title">数据缺口</h2></div></div>
+        <p class="section-note">资料不足时先核实，再进行价值分层。</p>
+        <div id="gaps" class="gaps"></div>
+      </section>
+    </div>
+    <section class="card source-panel" aria-labelledby="sources-title">
+      <div class="section-head"><div><span class="eyebrow">同步状态</span><h2 id="sources-title">数据源健康</h2></div><span class="section-note">区分同步时间与平台业务时间</span></div>
+      <div class="table-scroll"><table id="sources"><thead><tr><th>数据源</th><th>当前记录</th><th>批次</th><th>最后同步</th><th>最新业务时间</th><th>状态</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section class="card recent-panel" aria-labelledby="recent-title">
+      <div class="section-head"><div><span class="eyebrow">追溯记录</span><h2 id="recent-title">最近导入批次</h2></div></div>
+      <div class="table-scroll"><table id="recent"><thead><tr><th>批次 ID</th><th>数据源</th><th>写入记录</th><th>提交时间</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/app.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

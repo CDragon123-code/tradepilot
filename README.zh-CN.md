@@ -9,7 +9,7 @@
 
 [English](README.md) | **简体中文**
 
-外贸智能助手（TradePilot）是一个面向阿里国际站卖家的 Chrome/Edge 扩展：把询盘、聊天、客户、访客数据导出为 Excel，同时在本地数据看板里做统计与 AI 聊天分析。
+外贸智能助手（TradePilot）是一个面向阿里国际站卖家的 Chrome/Edge 扩展：把询盘、聊天、客户、访客数据导出为 Excel，同时在本地数据看板里做统计与 AI 聊天分析。仓库还包含可选的、自托管的云端数据平台（`server/`）。
 
 [隐私说明](PRIVACY.md) | [本地安装](#本地安装) | [打包上架](#打包上架) | [模型服务](#模型服务)
 
@@ -42,6 +42,7 @@ TradePilot 围绕一个每周可复用的闭环：
 * **数据看板** —— 扩展内置页：今日待办、询盘线索、客户资产、需求词库、投流诊断、复盘报表、资料库。
 * **本地资料库** —— 导出成功自动入库，也支持导入已有的 `.xlsx` 文件。
 * **云端同步（可选）** —— 入库数据进入本机队列，分批上传到自建服务，失败自动退避续传。
+* **自托管云端平台（可选）** —— 数据资产、主数据、数据质量、AI 智能体任务、API 网关与审计、经营总览；用 Docker Compose 从 `server/` 部署。
 * **兼容 OpenAI 协议** —— DeepSeek、通义千问、OpenAI、智谱 GLM，或任意自定义 `/chat/completions` 地址。
 
 ## 数据看板
@@ -65,10 +66,11 @@ TradePilot 围绕一个每周可复用的闭环：
 | `scripting`           | 在页面内触发下载，走平台自身的下载链路，文件名不被吞掉。           |
 | `storage`             | 保存设置、API Key 与待执行任务状态。                               |
 | `unlimitedStorage`    | 存放看板使用的本地 IndexedDB 数据。                                |
+| `cookies`             | 可选云端采集：把阿里登录态上传到你自己配置的服务器。               |
 | `https://*.alibaba.com/*` | 读取你已登录的页面与页面自身接口。                             |
 | 模型服务域名          | 只把提示词发送到你配置的模型地址，不访问其他主机。                 |
 
-不申请 `cookies` 权限，没有后台网络服务，也没有任何远程日志。
+扩展默认独立运行；云端同步是可选项，默认关闭。开启后，数据只上传到你配置的服务器。
 
 ## 模型服务
 
@@ -81,6 +83,17 @@ TradePilot 围绕一个每周可复用的闭环：
 * 自定义 OpenAI 兼容地址
 
 API Key 只保存在本机 `chrome.storage.local`。
+
+## 云端平台（可选）
+
+`server/` 提供一个自托管的云端数据平台：
+
+- Node.js 22 + PostgreSQL + Caddy，使用 Docker Compose 部署。
+- 数据资产、主数据、数据质量、AI 智能体任务、API 网关与审计、经营总览。
+- 支持租户与多店铺数据隔离，子账号可按 `seller_id` 独立分仓。
+- 仓库不包含生产地址、凭据、cookies 或客户数据；部署前请配置你自己的 `.env`。
+
+部署与接口说明见 [server/README.md](server/README.md)。
 
 ## 本地安装
 
@@ -105,27 +118,41 @@ Compress-Archive -Path manifest.json,dashboard.html,src,assets,README.md,PRIVACY
 ```
 manifest.json
 dashboard.html
+executor.html
+options.html
 src/
   content.js      页面内工作台 UI + 采集与导出
   background.js   下载改名、请求代理、入库、AI 流式转发
+  cloud-outbox.js 可选云端上传队列
   db.js           IndexedDB 数据层
   analyze.js      看板统计口径
   dashboard.js    看板视图
-  sse.js          SSE 流式解析
+  inquiry-reply.js 发送前门禁检查
+  dify.js         Dify 知识库客户端
 assets/
   icon-16/32/48/128/256/512.png
 docs/images/
+server/
+  src/            Node.js API
+  migrations/     PostgreSQL 迁移
+  public/         云端控制台页面
+  collector/      可选的服务端询盘采集器
+  deploy/         Docker Compose、Caddy、备份脚本
+  test/           Node 测试
 README.md
 README.zh-CN.md
 PRIVACY.md
+LICENSE
 qrcode.jpg
 ```
 
 ## 隐私
 
-TradePilot 没有后端。导出的 Excel 直接落到本机下载目录；看板数据存在扩展的 IndexedDB；设置与 API Key 存在 `chrome.storage.local`。
+扩展默认独立运行。导出的 Excel 直接落到本机下载目录；看板数据存在扩展的 IndexedDB；设置与 API Key 存在 `chrome.storage.local`。
 
-使用 AI 分析时，提示词由浏览器直接发送到你配置的模型接口，不经过作者的任何服务器。
+可选的 `server/` 平台为自托管。开启云端同步后，选定的数据与阿里登录态只上传到你配置的服务器，不经过作者的任何服务器。
+
+使用 AI 分析时，提示词由浏览器直接发送到你配置的模型接口。
 
 详见 [PRIVACY.md](PRIVACY.md)。
 
@@ -138,6 +165,8 @@ TradePilot 没有后端。导出的 Excel 直接落到本机下载目录；看�
 ## 状态
 
 MVP，用于自用与验证。平台接口会不定期调整，某个功能失效通常是字段变化而非扩展损坏。本项目与阿里巴巴集团无关；请仅用于你本人拥有权限的账号，并遵守平台条款。
+
+本公开仓库不包含真实客户数据、生产凭据、cookies 或已部署的服务器地址；测试数据均为虚构。
 
 ---
 

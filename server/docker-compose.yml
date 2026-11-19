@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ali_cloud}
+      POSTGRES_USER: ${POSTGRES_USER:-ali}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 设置 POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ali} -d ${POSTGRES_DB:-ali_cloud}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-ali}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-ali_cloud}
+      API_TOKEN: ${API_TOKEN:?请在 .env 设置 API_TOKEN}
+      SELLER_ID: ${SELLER_ID:-seller-main}
+      TENANT_ID: ${TENANT_ID:-default}
+      PORT: 8787
+    ports:
+      - "127.0.0.1:8787:8787"
+
+volumes:
+  pgdata:

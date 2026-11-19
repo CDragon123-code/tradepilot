@@ -23,10 +23,10 @@
     const transcript = (source.transcript || []).slice(-10).map((message) =>
       (message.at || '') + (message.mine ? ' 业务员：' : ' 客户：') + String(message.text || '').slice(0, 400)).join('\n');
     const demandType = source.demand && source.demand.type;
-    const special = demandType === 'mismatch_finished'
-      ? '这是一条非主营的成品需求。公司不生产、不销售该类成品，也不承接相关加工；请礼貌说明这块帮不上，最多一句话说明公司主营方向，不推销、不报价、不承诺样品，感谢并祝对方找到合适供应商。'
-      : demandType === 'target_material'
-        ? '客户在咨询主营材料，属于目标需求；确认收到并只提出一个澄清问题。'
+    const special = demandType === 'denture_mismatch'
+      ? '这是一条成品假牙/义齿需求。公司不生产、不销售成品假牙，也不承接假牙加工；请礼貌说明这块帮不上，最多一句话说明公司做齿科 3D 打印树脂（如义齿基托树脂），不推销、不报价、不承诺样品，感谢并祝对方找到合适供应商。'
+      : demandType === 'denture_material'
+        ? '客户在咨询义齿基托/柔性义齿/牙龈遮蔽等材料，属于目标需求；确认收到并只提出一个澄清问题。'
         : '';
     return [
       '请为外贸业务员生成一条给客户的回复草稿，供员工审核后决定是否发送。',

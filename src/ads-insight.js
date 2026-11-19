@@ -1582,8 +1582,8 @@
       const sumShare = a.terms.reduce((s, x) => s + x.clickshare, 0) || 1;
       const groups = [
         { name: '过泛词', test: /^(polymer|liquid polymer|resin|plastic resin|3d resin|uv resin|3d printing resin|3d printer resin|micro-resin|resin printing clear)$/i, color: '#111827' },
-        { name: '核心品类词', test: /product|material|equipment/i, color: '#8c8c87' },
-        { name: '无关词', test: /whitening|porcelain|epoxy|filament|3d printers|fabrication|after-sales|resin art/i, color: '#b42318' },
+        { name: '核心品类词', test: /dental|denture|crown|orthodont|aligner/i, color: '#8c8c87' },
+        { name: '无关词', test: /whitening|porcelain|epoxy|filament|3d printers|fabrication|denture care|resin art/i, color: '#b42318' },
       ];
       const agg = {};
       a.terms.forEach((x) => {
@@ -1888,7 +1888,11 @@
     if (!raw || !raw.account || !raw.account.length) { toast('请先同步或导入数据'); return; }
     if (aiBusy) { toast('正在回答，请先停止或稍候'); return; }
     aiBusy = true;
-    const cfg = await new Promise((r) => chrome.storage.local.get(['aliAiCfg'], (o) => r(o && o.aliAiCfg ? o.aliAiCfg : {})));
+    let cfg = {};
+    try {
+      const secured = await chrome.runtime.sendMessage({ type: 'secureGet', key: 'aliAiCfg' });
+      if (secured && secured.ok && secured.value) cfg = secured.value;
+    } catch (e) { /* 后台不可用时按未配置处理 */ }
     if (!cfg.apiKey || !cfg.baseUrl || !cfg.model) { aiBusy = false; toast('请先在「设置」里配置 AI 模型与 API Key'); return; }
 
     const a = analyze(raw);

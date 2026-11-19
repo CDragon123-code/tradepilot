@@ -13,12 +13,12 @@
     { id: 'glm', label: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
   ];
   const NAV = [
-    ['home', '今日待办'], ['inbox', '智能客服'], ['inquiry', '询盘线索'], ['customers', '客户资产'],
-    ['shadow', '智能客服试运行'], ['identity', '客户归并'], ['demand', '需求词库'], ['ads', '投流诊断'], ['library', '资料库'], ['report', '复盘报表'], ['settings', '设置'],
+    ['home', '今日待办'], ['inbox', '智能客服'], ['inquiry', '询盘线索'], ['customers', '客户资产'], ['expo', '展会通知'],
+    ['overview', '经营总览'], ['shadow', '智能客服试运行'], ['identity', '客户归并'], ['demand', '需求词库'], ['ads', '投流诊断'], ['library', '资料库'], ['report', '复盘报表'], ['settings', '设置'],
   ];
   const NAV_GROUPS = [
-    ['日常工作', ['home', 'inbox', 'inquiry', 'customers']],
-    ['分析与复盘', ['shadow', 'demand', 'ads', 'report', 'identity']],
+    ['日常工作', ['home', 'inbox', 'inquiry', 'customers', 'expo']],
+    ['分析与复盘', ['overview', 'shadow', 'demand', 'ads', 'report', 'identity']],
     ['数据与配置', ['library', 'settings']],
   ];
   const KINDS = DB.KINDS;
@@ -76,6 +76,15 @@
   let inboxStream = null;
   let inboxTimer = null;
   const charts = {};
+  const EXPO_DEFAULT_TEMPLATE = 'Hi {name},\n\nWe will be exhibiting at {exhibition} on {date} at {venue}, booth {booth}. We would be glad to meet you and show our latest products.\n\nBest regards,\n{sender}';
+  let EXPO_STATE = {
+    country: '', mineOnly: false, hotOnly: false, contactOnly: false,
+    exhibition: '', date: '', venue: '', booth: '', sender: '',
+    template: EXPO_DEFAULT_TEMPLATE,
+  };
+  let EXPO_RESULT = null;
+  let EXPO_DATA = null;
+  let EXPO_INDEX = null;
 
   function renderProgress(state) {
     lastProgress = state || null;
@@ -165,7 +174,8 @@
     Object.keys(charts).forEach((id) => { charts[id].dispose(); delete charts[id]; });
     navBar();
     window.scrollTo(0, 0);
-    const fn = { home: loadHome, inbox: loadInbox, inquiry: loadInquiry, customers: loadCustomers, shadow: loadShadow,
+    const fn = { home: loadHome, inbox: loadInbox, inquiry: loadInquiry, customers: loadCustomers, expo: loadExpo, shadow: loadShadow,
+      overview: loadStoreOverview,
       identity: loadIdentity, demand: loadDemand, ads: loadAds,
       library: loadLibrary, report: loadReport, settings: loadSettings }[k];
     if (fn) {
@@ -271,17 +281,37 @@
   async function openAccountProbe() {
     const tab = await chrome.tabs.create({ url: 'https://onetalk.alibaba.com/message/weblitePWA.htm', active: false });
     if (!tab || tab.id == null) throw new Error('无法打开账号核实页面');
+    // 后台标签页可能被浏览器冻结/丢弃，先标记为不可丢弃
+    try { chrome.tabs.update(tab.id, { autoDiscardable: false }); } catch (e) { /* ignore */ }
     let ready = false;
-    for (let attempt = 0; attempt < 30; attempt++) {
+    let loginRedirect = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
       await wait(1000);
+      try {
+        const info = await chrome.tabs.get(tab.id);
+        const u = String((info && info.url) || '');
+        // 被重定向到登录页：直接给出明确提示，不再空等
+        if (/login\.alibaba\.com|passport\.alibaba\.com|\/login/i.test(u)) { loginRedirect = true; break; }
+      } catch (e) { break; } // 标签页被关闭
       try {
         const pong = await chrome.tabs.sendMessage(tab.id, { type: 'platformCollectPing' });
         if (pong && pong.ok) { ready = true; break; }
       } catch (e) { /* 等待页面和内容脚本 */ }
+      // 页面已加载但内容脚本没注入（扩展刚更新/页面缓存）：补注入一次
+      if (attempt === 10) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['vendor/xlsx.full.min.js', 'src/identity.js', 'src/order-match.js',
+              'src/platform-job.js', 'src/sync-state.js', 'src/content.js'],
+          });
+        } catch (e) { /* 页面还没就绪，继续等 */ }
+      }
     }
     if (!ready) {
       await chrome.tabs.remove(tab.id).catch(() => {});
-      throw new Error('无法核实卖家账号：请先登录 OneTalk');
+      if (loginRedirect) throw new Error('阿里/OneTalk 登录已失效：请先在 Edge 登录阿里国际站和 OneTalk，再点「自动更新」');
+      throw new Error('无法核实卖家账号：OneTalk 页面 60 秒内未就绪。请先打开 https://onetalk.alibaba.com/message/weblitePWA.htm 确认能正常进入，再重新更新');
     }
     return {
       tabId: tab.id,
@@ -1186,7 +1216,7 @@
       + '<button type="button" class="ghost" data-inbox-filter="new">首次询盘</button>'
       + '<button type="button" class="ghost" data-inbox-filter="buyer">买家新消息</button>'
       + '<button type="button" class="ghost" data-inbox-filter="risk">含风险</button>'
-      + '<button type="button" class="ghost" data-inbox-filter="finished">成品需求</button>'
+      + '<button type="button" class="ghost" data-inbox-filter="denture">假牙需求</button>'
       + '<button type="button" class="ghost" data-inbox-filter="waiting">等待客户</button>'
       + '<button type="button" class="ghost" data-inbox-filter="all">全部</button>'
       + '<span class="muted">按优先级排序；正在编辑时不会自动刷新</span></div>'
@@ -1254,7 +1284,7 @@
             : kind === 'new' ? rowKind === 'new'
               : kind === 'buyer' ? rowKind === 'buyer_replied'
                 : kind === 'risk' ? row.dataset.inboxRisk === '1' && needs
-                  : kind === 'finished' ? (row.dataset.inboxDemand || '').indexOf('mismatch_finished') === 0
+                  : kind === 'denture' ? (row.dataset.inboxDemand || '').indexOf('denture') === 0
                     : kind === 'waiting' ? rowKind === 'waiting' : true;
         row.hidden = !show;
       });
@@ -1717,7 +1747,8 @@
     }
     const s = idx.stats;
     const dup = idx.duplicateGroups.slice(0, 80);
-    const chatOnly = idx.chatOnly.slice(0, 80);
+    const allChatOnly = idx.chatOnly;
+    const chatOnly = allChatOnly.slice(0, 80);
     $('#view').innerHTML = '<h2>身份统一</h2>'
       + concl('把询盘、我的客户、公海客户、聊天会话归并到同一个客户档案：优先按客户ID/邮箱/登录名/公司名匹配，姓名只作别名，避免把同名客户误合并。',
         '建议先看「合并后的重复客户」是否符合实际，再使用首页待办与回访建议')
@@ -1726,7 +1757,7 @@
         ['合并重复组', s.duplicateGroups, '同一客户多份资料'],
         ['已关联询盘', s.linkedInquiries + ' / ' + s.inquiries, '能对上客户档案'],
         ['已关联聊天会话', s.linkedChatSessions + ' / ' + s.chatSessions, '客户档案 ' + (s.linkedChatSessionsCrm || 0) + '，其余对询盘'],
-        ['未匹配聊天', chatOnly.length, '聊天有、客户库无'],
+        ['未匹配聊天', allChatOnly.length, '聊天有、客户库无'],
         ['客户别名', s.aliases, '用于搜索与匹配'],
       ])
       + '<h3>合并后的重复客户</h3>'
@@ -1853,6 +1884,176 @@
       xAxis: { type: 'category', data: d.pub.tiers.map((t) => t[0].split(' ')[0]) }, yAxis: { type: 'value' },
       series: [{ type: 'bar', data: d.pub.tiers.map((t) => t[1]), itemStyle: { color: '#0e7490', borderRadius: 4 } }],
     });
+  }
+
+  // ---------------- 展会通知 ----------------
+  function expoFill(template, row) {
+    const map = {
+      name: row.name || 'there',
+      company: row.company || '',
+      country: row.country || '',
+      exhibition: EXPO_STATE.exhibition || '',
+      date: EXPO_STATE.date || '',
+      venue: EXPO_STATE.venue || '',
+      booth: EXPO_STATE.booth || '',
+      sender: EXPO_STATE.sender || '',
+    };
+    return String(template || '').replace(/\{(name|company|country|exhibition|date|venue|booth|sender)\}/g,
+      (_, key) => (map[key] === undefined ? '' : map[key]));
+  }
+
+  function expoCsvCell(v) {
+    return '"' + String(v === undefined || v === null ? '' : v).replace(/"/g, '""') + '"';
+  }
+
+  function renderExpoResults() {
+    const summary = $('#expo-summary');
+    const host = $('#expo-result');
+    if (!summary || !host) return;
+    const d = EXPO_RESULT;
+    if (!d) { summary.innerHTML = ''; host.innerHTML = ''; return; }
+    summary.innerHTML = cards([
+      ['匹配客户', d.matched, d.country],
+      ['有邮箱', d.withEmail, '可直接复制'],
+      ['有电话', d.withPhone, '需人工核对'],
+      ['高价值', d.hotCount, 'L3/L4 · 金牌 · 星标'],
+    ]) + (d.missingCountry
+      ? '<div class="muted" style="margin:8px 0 0;">另有 ' + d.missingCountry + ' 位客户未填写国家，未纳入国家筛选。</div>'
+      : '');
+    if (!d.rows.length) {
+      host.innerHTML = '<h3>匹配客户</h3><div class="panel"><div class="muted">没有匹配客户。请更换国家、取消筛选，或先在「资料库」同步客户与询盘。</div></div>';
+      return;
+    }
+    const shown = d.rows.slice(0, 200);
+    host.innerHTML = '<h3>匹配客户（' + d.matched + '）</h3>'
+      + (d.rows.length > shown.length ? '<div class="muted">页面显示前 ' + shown.length + ' 条；导出 CSV 包含全部 ' + d.rows.length + ' 条。</div>' : '')
+      + '<div class="panel">' + tbl(
+        ['客户/联系人', '公司', '国家', '等级', '来源', '邮箱', '电话', '最近询盘', '主题', '负责人', ''],
+        shown.map((r) => [
+          esc(r.name) + (r.hot ? ' <span class="tag">高价值</span>' : ''),
+          esc(r.company || '-'), esc(r.country), esc(r.tier), esc(r.sources),
+          esc(r.email || '-'), esc(r.phone || '-'), esc(r.inquiryAt || '-'),
+          esc((r.subject || '').slice(0, 40)), esc(r.owner || '-'),
+          '<button type="button" class="link" data-expo-copy="' + esc(r.uid) + '">复制话术</button>',
+        ]), 200) + '</div>';
+    host.querySelectorAll('[data-expo-copy]').forEach((button) => {
+      button.onclick = () => {
+        const row = d.rows.find((x) => x.uid === button.dataset.expoCopy);
+        if (!row) return;
+        navigator.clipboard.writeText(expoFill(EXPO_STATE.template, row))
+          .then(() => toast('已复制 ' + row.name + ' 的展会话术'))
+          .catch(() => toast('复制失败，请手动选中'));
+      };
+    });
+  }
+
+  function applyExpoFilters(rows) {
+    if (rows !== EXPO_DATA || !EXPO_INDEX) {
+      EXPO_DATA = rows;
+      EXPO_INDEX = ID ? ID.build(rows) : null;
+    }
+    EXPO_RESULT = A.exhibition(rows, EXPO_STATE.country, {
+      mineOnly: EXPO_STATE.mineOnly,
+      hotOnly: EXPO_STATE.hotOnly,
+      contactOnly: EXPO_STATE.contactOnly,
+      idx: EXPO_INDEX,
+      limit: 0,
+    });
+    renderExpoResults();
+  }
+
+  async function loadExpo() {
+    $('#view').innerHTML = '<h2>展会通知</h2><div class="muted">加载中…</div>';
+    // 展会通知只看客户与询盘，不加载聊天/订单/访客，避免 2 万多条聊天进入身份归并
+    const rows = await DB.dataset(['inquiry', 'customer', 'public_customer']);
+    if (cur !== 'expo') return;
+    EXPO_DATA = rows;
+    EXPO_INDEX = ID ? ID.build(rows) : null;
+    const all = A.exhibition(rows, '', { idx: EXPO_INDEX, limit: 0 });
+    if (!all.totalProfiles) {
+      $('#view').innerHTML = '<h2>展会通知</h2>' + emptyHint();
+      return;
+    }
+    if (EXPO_STATE.country && !all.countries.some((c) => c.key === EXPO_STATE.country)) EXPO_STATE.country = '';
+    const options = ['<option value="">全部国家（' + all.totalProfiles + ' 位客户）</option>']
+      .concat(all.countries.map((c) => '<option value="' + esc(c.key) + '"'
+        + (c.key === EXPO_STATE.country ? ' selected' : '') + '>' + esc(c.label) + '（' + c.count + '）</option>'));
+    $('#view').innerHTML = '<h2>展会通知</h2>'
+      + concl('按国家筛选客户，生成展会通知名单与话术；本页只生成名单，不自动发送。',
+        '发送前请核对客户关系与 DNC；L3 自动发送默认关闭。')
+      + '<div class="panel"><h3 style="margin-top:0;">筛选与内容</h3>'
+      + '<div class="bar">'
+      + '<label class="expo-check">国家/地区 <select id="expo-country">' + options.join('') + '</select></label>'
+      + '<label class="expo-check"><input type="checkbox" id="expo-mine"' + (EXPO_STATE.mineOnly ? ' checked' : '') + '> 仅我的客户</label>'
+      + '<label class="expo-check"><input type="checkbox" id="expo-hot"' + (EXPO_STATE.hotOnly ? ' checked' : '') + '> 仅高价值</label>'
+      + '<label class="expo-check"><input type="checkbox" id="expo-contact"' + (EXPO_STATE.contactOnly ? ' checked' : '') + '> 仅含邮箱/电话</label>'
+      + '<button type="button" id="expo-apply">生成名单</button></div>'
+      + '<div class="grid2">'
+      + '<label class="expo-field">展会名称<input id="expo-name" value="' + esc(EXPO_STATE.exhibition) + '" placeholder="例如：Expodental Portugal 2026"></label>'
+      + '<label class="expo-field">时间<input id="expo-date" value="' + esc(EXPO_STATE.date) + '" placeholder="例如：2026-11-20 10:00"></label>'
+      + '<label class="expo-field">地点<input id="expo-venue" value="' + esc(EXPO_STATE.venue) + '" placeholder="例如：Lisboa Congress Centre"></label>'
+      + '<label class="expo-field">展位<input id="expo-booth" value="' + esc(EXPO_STATE.booth) + '" placeholder="例如：B12"></label>'
+      + '<label class="expo-field">署名<input id="expo-sender" value="' + esc(EXPO_STATE.sender) + '" placeholder="例如：Ray / TradePilot"></label>'
+      + '</div>'
+      + '<label class="expo-field" style="margin-top:10px;">话术模板<textarea id="expo-template" class="expo-template">' + esc(EXPO_STATE.template) + '</textarea></label>'
+      + '<div class="muted">占位符：{name} {company} {country} {exhibition} {date} {venue} {booth} {sender}。发送前请人工确认内容，不承诺价格、交期、认证。</div>'
+      + '<div class="bar" style="margin-top:10px;"><button type="button" id="expo-export">导出 CSV</button>'
+      + '<button type="button" class="ghost" id="expo-copy-list">复制名单</button>'
+      + '<button type="button" class="ghost" id="expo-copy-all">复制全部话术</button></div>'
+      + '<div class="muted">CSV/复制只包含筛选结果；发送仍需在阿里聊天窗口逐条人工确认。</div></div>'
+      + '<div id="expo-summary"></div><div id="expo-result"></div>';
+    const readForm = () => {
+      EXPO_STATE.country = $('#expo-country').value;
+      EXPO_STATE.mineOnly = $('#expo-mine').checked;
+      EXPO_STATE.hotOnly = $('#expo-hot').checked;
+      EXPO_STATE.contactOnly = $('#expo-contact').checked;
+      EXPO_STATE.exhibition = $('#expo-name').value.trim();
+      EXPO_STATE.date = $('#expo-date').value.trim();
+      EXPO_STATE.venue = $('#expo-venue').value.trim();
+      EXPO_STATE.booth = $('#expo-booth').value.trim();
+      EXPO_STATE.sender = $('#expo-sender').value.trim();
+      EXPO_STATE.template = $('#expo-template').value;
+    };
+    const filter = () => { readForm(); applyExpoFilters(rows); };
+    $('#expo-apply').onclick = filter;
+    $('#expo-country').onchange = filter;
+    ['expo-mine', 'expo-hot', 'expo-contact'].forEach((id) => { $('#' + id).onchange = filter; });
+    ['expo-name', 'expo-date', 'expo-venue', 'expo-booth', 'expo-sender', 'expo-template'].forEach((id) => {
+      $('#' + id).oninput = () => { readForm(); renderExpoResults(); };
+    });
+    $('#expo-export').onclick = () => {
+      const d = EXPO_RESULT;
+      if (!d || !d.rows.length) { toast('没有可导出的客户'); return; }
+      const header = ['客户/联系人', '公司', '国家', '等级', '来源', '邮箱', '电话', '登录名', '最近询盘', '询盘主题', '产品', '负责人', '询盘ID', '客户ID', '展会话术'];
+      const lines = [header].concat(d.rows.map((r) => [
+        r.name, r.company, r.country, r.tier, r.sources, r.email, r.phone, r.login,
+        r.inquiryAt, r.subject, r.product, r.owner, r.inquiryId, r.customerId,
+        expoFill(EXPO_STATE.template, r),
+      ]));
+      const csv = lines.map((line) => line.map(expoCsvCell).join(',')).join('\r\n');
+      const safe = String(d.country || '全部').replace(/[\\/:*?"<>|]/g, '_');
+      downloadText('展会通知_' + safe + '_' + new Date().toISOString().slice(0, 10) + '.csv', csv);
+    };
+    $('#expo-copy-list').onclick = () => {
+      const d = EXPO_RESULT;
+      if (!d || !d.rows.length) { toast('没有可复制的客户'); return; }
+      const lines = [['客户/联系人', '公司', '国家', '邮箱', '电话', '等级', '来源', '最近询盘', '主题', '负责人'].join('\t')]
+        .concat(d.rows.map((r) => [r.name, r.company, r.country, r.email, r.phone, r.tier, r.sources, r.inquiryAt, r.subject, r.owner].join('\t')));
+      navigator.clipboard.writeText(lines.join('\n'))
+        .then(() => toast('已复制 ' + d.rows.length + ' 位客户名单'))
+        .catch(() => toast('复制失败，请使用导出 CSV'));
+    };
+    $('#expo-copy-all').onclick = () => {
+      const d = EXPO_RESULT;
+      if (!d || !d.rows.length) { toast('没有可复制的话术'); return; }
+      if (!confirm('将复制 ' + d.rows.length + ' 条话术；本页不会自动发送，仍需逐条人工确认。继续？')) return;
+      const text = d.rows.map((r) => expoFill(EXPO_STATE.template, r)).join('\n\n---\n\n');
+      navigator.clipboard.writeText(text)
+        .then(() => toast('已复制 ' + d.rows.length + ' 条话术'))
+        .catch(() => toast('复制失败，请缩小筛选范围'));
+    };
+    readForm();
+    applyExpoFilters(rows);
   }
 
   function aiDialogHtml(id, title, note) {
@@ -2283,6 +2484,71 @@
     await self.AliAdsInsight.render(view, () => cur === 'ads');
   }
 
+  // ---------------- 经营总览 ----------------
+  async function loadStoreOverview() {
+    $('#view').innerHTML = '<h2>经营总览</h2><div class="muted">加载中…</div>';
+    const rows = await data();
+    if (cur !== 'overview') return;
+    const d = A.storeOverview(rows);
+    if (!(rows.inquiry || []).length && !(rows.order || []).length) {
+      $('#view').innerHTML = '<h2>经营总览</h2>' + emptyHint();
+      return;
+    }
+    const funnel = d.funnel.map((s) => '<div class="funnel-row"><div class="funnel-label">' + esc(s.label) + '</div>'
+      + '<div class="funnel-bar"><i style="width:' + (s.rate === null ? 0 : Math.max(2, Math.min(100, s.rate))) + '%"></i></div>'
+      + '<div class="funnel-meta"><b>' + s.count + '</b><span>' + (s.rate === null ? '—' : s.rate + '%') + '</span></div></div>'
+      + '<div class="funnel-hint">' + esc(s.hint) + '</div>').join('');
+    const quality = d.quality.length ? d.quality.map((q) =>
+      '<div class="q-row"><span class="chip ' + (q.level === 'high' ? 'high' : q.level === 'mid' ? 'mid' : 'tag') + '">'
+      + (q.level === 'high' ? '高' : q.level === 'mid' ? '中' : '低') + '</span>'
+      + '<b>' + esc(q.label) + '</b><span class="q-num">' + q.count + ' / ' + q.total + '</span>'
+      + '<span class="muted">' + esc(q.hint) + '</span></div>').join('')
+      : '<div class="muted">暂无明显资料缺口。</div>';
+    $('#view').innerHTML = '<h2>经营总览</h2>'
+      + aiDialogHtml('o-ai-dialog', 'AI 经营诊断', '基于本机六类资料汇总流式分析，可继续追问。')
+      + concl(esc(d.headline), '生成时间 ' + esc(d.generatedAt)
+        + ' · 只统计本机已导入资料；成交额按币种分开累计，订单数为已付款/已完成口径')
+      + cards(d.kpis)
+      + '<div class="grid2">'
+      + '<div class="panel"><h3 style="margin-top:0;">询盘转化漏斗</h3>' + funnel + '</div>'
+      + '<div class="panel"><h3 style="margin-top:0;">近 6 个月询盘与已确认订单</h3><div id="c-ov-trend" class="chart"></div></div>'
+      + '</div>'
+      + '<div class="grid2">'
+      + '<div class="panel"><h3 style="margin-top:0;">询盘国家 Top</h3>' + (d.countries.length
+        ? '<div id="c-ov-country" class="chart"></div>' : '<div class="muted">暂无国家数据</div>') + '</div>'
+      + '<div class="panel"><h3 style="margin-top:0;">询盘来源 Top</h3>' + (d.sources.length
+        ? '<div id="c-ov-source" class="chart"></div>' : '<div class="muted">暂无来源数据</div>') + '</div>'
+      + '</div>'
+      + '<h3>资料缺口</h3><div class="panel">' + quality + '</div>';
+    mountAiDialog('o-ai-dialog', 'store', DAI.storeOverviewContext(d),
+      '你是阿里巴巴国际站店铺经营顾问。只根据提供的本机汇总数据分析，区分事实、推断和数据缺口。成交额按币种分开，不跨币种相加；订单数不是询盘去重数；历史数据不代表平台实时状态。先给结论，再给按优先级排序的可执行动作和验证指标；不要编造平台大盘对比或行业均值。可继续回答员工追问。',
+      '请解读这份经营总览：指出最影响成交的 2 个瓶颈、各自的数据依据、接下来 7 天可执行的动作，以及还需要补齐哪些资料。');
+    chart('c-ov-trend', {
+      grid: { left: 8, right: 14, top: 34, bottom: 6, containLabel: true },
+      tooltip: { trigger: 'axis' },
+      legend: { data: ['询盘', '已确认订单'], top: 0, textStyle: { fontSize: 11 } },
+      xAxis: { type: 'category', data: d.trend.map((t) => t.label) },
+      yAxis: [{ type: 'value', name: '询盘', nameTextStyle: { fontSize: 10 } },
+        { type: 'value', name: '订单', nameTextStyle: { fontSize: 10 } }],
+      series: [
+        { name: '询盘', type: 'bar', data: d.trend.map((t) => t.inquiries), barMaxWidth: 26,
+          itemStyle: { color: '#2f6fd0', borderRadius: 4 } },
+        { name: '已确认订单', type: 'line', yAxisIndex: 1, data: d.trend.map((t) => t.orders),
+          itemStyle: { color: '#0d9488' }, lineStyle: { width: 2 }, symbolSize: 6 },
+      ],
+    });
+    const hBar = (id, list, color) => chart(id, {
+      grid: { left: 8, right: 34, top: 8, bottom: 6, containLabel: true },
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'value' },
+      yAxis: { type: 'category', data: list.map((x) => x.name).reverse(), axisLabel: { fontSize: 11 } },
+      series: [{ type: 'bar', data: list.map((x) => x.count).reverse(), barMaxWidth: 16,
+        itemStyle: { color, borderRadius: 3 } }],
+    });
+    if (d.countries.length) hBar('c-ov-country', d.countries, '#2563eb');
+    if (d.sources.length) hBar('c-ov-source', d.sources, '#7c3aed');
+  }
+
   // ---------------- 复盘报表 ----------------
   async function loadReport() {
     $('#view').innerHTML = '<h2>复盘报表</h2><div class="muted">加载中…</div>';
@@ -2300,13 +2566,21 @@
   }
 
   // ---------------- 设置 ----------------
+  async function secureGet(key) {
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'secureGet', key: key });
+      return (r && r.ok && r.value) || {};
+    } catch (e) { return {}; }
+  }
+  async function secureSet(key, value) {
+    const r = await chrome.runtime.sendMessage({ type: 'secureSet', key: key, value: value });
+    if (!r || !r.ok) throw new Error((r && r.message) || '加密保存失败');
+  }
   async function loadAiCfg() {
-    const o = await chrome.storage.local.get(AI_KEY);
-    return (o && o[AI_KEY]) || {};
+    return secureGet(AI_KEY);
   }
   async function loadDifyCfg() {
-    const o = await chrome.storage.local.get(DIFY_KEY);
-    return (o && o[DIFY_KEY]) || {};
+    return secureGet(DIFY_KEY);
   }
   async function aiChat(messages, cfg) {
     if (!cfg || !cfg.baseUrl || !cfg.apiKey || !cfg.model) throw new Error('还没配置模型：到「设置」里选预设并填 API Key');
@@ -2351,7 +2625,7 @@
       + '<a href="https://openapi.alibaba.com/doc/doc.htm" target="_blank" rel="noopener">查看阿里开放平台接入要求</a>。</div></div>'
       + '<h3>AI 模型</h3>'
       + (problem ? '<div class="panel warn">⚠️ ' + esc(problem) + '</div>' : '')
-      + '<div class="panel"><div class="muted">与扩展面板的「AI 设置（模型）」<b>共用同一份配置</b>（存本机 chrome.storage.local），可用于需求词库和复盘报表顶部的流式 AI 对话。发送时只提供对应页面的汇总数据。</div>'
+      + '<div class="panel"><div class="muted">与扩展面板的「AI 设置（模型）」<b>共用同一份配置</b>（AES-256-GCM 加密保存在本机，仅扩展后台可解密），可用于需求词库和复盘报表顶部的流式 AI 对话。发送时只提供对应页面的汇总数据。</div>'
       + '<div class="muted" style="margin-top:6px;">当前生效：<b>' + esc(c.baseUrl || '未填') + '</b> · 模型 <b>' + esc(c.model || '未填') + '</b> · Key <b>' + esc(maskKey(c.apiKey)) + '</b></div>'
       + '<div class="bar" style="margin-top:10px;">预设<select id="s-preset">' + AI_PRESETS.map((p, i) => '<option value="' + i + '">' + p.label + '</option>').join('') + '</select>'
       + '<span class="muted">选预设会自动填 Base URL 与模型</span></div>'
@@ -2417,9 +2691,13 @@
     };
     $('#s-save').onclick = async () => {
       const cfg = { baseUrl: $('#s-url').value.trim(), apiKey: $('#s-key').value.trim(), model: $('#s-model').value.trim() };
-      await chrome.storage.local.set({ [AI_KEY]: cfg });
-      if (String(cfg.apiKey).toLowerCase().startsWith('http')) $('#s-msg').innerHTML = '<span style="color:#b91c1c;">已保存，但 API Key 里看起来是网址：密钥（sk- 开头）填 API Key，网址填 Base URL</span>';
-      else { toast('已保存'); $('#s-msg').textContent = '已保存，可点「测试连接」验证。'; }
+      try {
+        await secureSet(AI_KEY, cfg);
+        if (String(cfg.apiKey).toLowerCase().startsWith('http')) $('#s-msg').innerHTML = '<span style="color:#b91c1c;">已加密保存，但 API Key 里看起来是网址：密钥（sk- 开头）填 API Key，网址填 Base URL</span>';
+        else { toast('已加密保存'); $('#s-msg').textContent = '已加密保存，可点「测试连接」验证。'; }
+      } catch (e) {
+        $('#s-msg').innerHTML = '<span style="color:#b91c1c;">保存失败：' + esc(e.message) + '</span>';
+      }
     };
     $('#s-test').onclick = async () => {
       $('#s-msg').textContent = '测试中…';
@@ -2446,10 +2724,14 @@
         apiKey: $('#d-key').value.trim(),
         inputs,
       };
-      await chrome.storage.local.set({ [DIFY_KEY]: cfg });
-      $('#d-msg').textContent = cfg.apiKey && !cfg.apiKey.startsWith('app-')
-        ? '已保存，但 Dify API Key 通常以 app- 开头，请确认。'
-        : '已保存，可点「测试 Dify」验证。';
+      try {
+        await secureSet(DIFY_KEY, cfg);
+        $('#d-msg').textContent = cfg.apiKey && !cfg.apiKey.startsWith('app-')
+          ? '已加密保存，但 Dify API Key 通常以 app- 开头，请确认。'
+          : '已加密保存，可点「测试 Dify」验证。';
+      } catch (e) {
+        $('#d-msg').textContent = '保存失败：' + e.message;
+      }
     };
     $('#d-test').onclick = async () => {
       const baseUrl = $('#d-url').value.trim();
@@ -2535,6 +2817,34 @@
     await chrome.storage.local.set({ [PROGRESS_KEY]: next });
     renderProgress(next);
   };
+  // 版本更新：连接云端检查，由本机更新服务覆盖文件，然后重载扩展
+  const checkUpdateBtn = $('#check-update');
+  if (checkUpdateBtn) {
+    checkUpdateBtn.onclick = async () => {
+      if (checkUpdateBtn.disabled) return;
+      const label = checkUpdateBtn.textContent;
+      checkUpdateBtn.disabled = true;
+      checkUpdateBtn.textContent = '检查中…';
+      try {
+        const r = await chrome.runtime.sendMessage({ type: 'extensionUpdateCheck' });
+        if (!r || !r.ok) throw new Error((r && r.error) || '检查更新失败');
+        if (!r.update) { toast('当前已是最新版本 v' + r.current); return; }
+        const ok = window.confirm('发现新版本 v' + r.latest + '（当前 v' + r.current + '）。\n\n更新会覆盖扩展文件并自动重载，本机数据不会丢失。\n请确认现在没有正在发送的消息。\n\n是否立即更新？');
+        if (!ok) return;
+        checkUpdateBtn.textContent = '更新中…';
+        const u = await chrome.runtime.sendMessage({ type: 'extensionUpdateApply' });
+        if (!u || !u.ok) throw new Error((u && u.error) || '更新失败');
+        if (!u.updated) { toast('当前已是最新版本 v' + (u.after || r.current)); return; }
+        toast('已更新到 v' + (u.after || r.latest) + '，扩展即将重载…');
+        setTimeout(() => { chrome.runtime.sendMessage({ type: 'extensionUpdateReload' }).catch(() => {}); }, 900);
+      } catch (err) {
+        toast((err && err.message) || '更新失败');
+      } finally {
+        checkUpdateBtn.disabled = false;
+        checkUpdateBtn.textContent = label;
+      }
+    };
+  }
   navBar(); loadStats();
   (async () => {
     activeWorkspaceId = await DB.activeWorkspace();

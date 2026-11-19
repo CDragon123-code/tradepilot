@@ -1,0 +1,57 @@
+:root {
+  --shell-ink: #17243b;
+  --shell-muted: #64748b;
+  --shell-line: #dfe6f0;
+  --shell-blue: #2759d8;
+  --shell-bg: #f5f7fb;
+}
+
+body.with-rail { padding-left: 224px; background: var(--shell-bg); color: var(--shell-ink); }
+.app-rail {
+  position: fixed; z-index: 30; inset: 0 auto 0 0; width: 224px;
+  display: flex; flex-direction: column; padding: 24px 12px 18px;
+  color: #d9e5fb; background: #12213b; border-right: 1px solid #223958;
+}
+.rail-brand { display: flex; align-items: center; gap: 11px; padding: 0 10px 28px; color: #fff; text-decoration: none; }
+.rail-logo { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border-radius: 10px; background: #4e7bfb; color: white; font-size: 18px; font-weight: 800; }
+.rail-brand strong { display: block; font-size: 14px; letter-spacing: .02em; }
+.rail-brand small { display: block; margin-top: 1px; color: #96a9ca; font-size: 11px; }
+.rail-label { margin: 0 12px 9px; color: #8298bb; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+.rail-links { display: grid; gap: 4px; }
+.rail-links a {
+  display: flex; align-items: center; gap: 10px; min-height: 42px;
+  padding: 8px 12px; border: 1px solid transparent; border-radius: 10px;
+  color: #c3d2ec; text-decoration: none; font-size: 13px; font-weight: 600;
+}
+.rail-links a:hover, .rail-links a:focus-visible { color: #fff; background: #21375a; outline: none; }
+.rail-links a[aria-current="page"] { color: #fff; background: #2b4773; border-color: #3d5d8c; }
+.rail-icon { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: #2c4366; color: #d9e5fb; font-size: 11px; font-weight: 800; }
+.rail-links a[aria-current="page"] .rail-icon { background: #5d87ff; color: #fff; }
+.rail-foot { margin-top: auto; padding: 16px 11px 0; border-top: 1px solid #2a4162; color: #9fb2d0; font-size: 11px; line-height: 1.5; }
+.rail-foot strong { display: block; color: #e4ebf8; font-size: 12px; }
+
+body.with-rail .page { max-width: 1320px; padding-top: 28px; }
+body.with-rail .top { padding: 18px 22px; border: 1px solid var(--shell-line); border-radius: 14px; background: #fff; }
+body.with-rail .card { border-color: var(--shell-line); box-shadow: 0 2px 12px rgba(29, 51, 87, .035); }
+body.with-rail #panel:has(#overview) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 16px; }
+body.with-rail #panel:has(#overview) > .card { margin-top: 0; }
+body.with-rail #panel:has(#overview) > .card:first-child,
+body.with-rail #panel:has(#overview) > .card:last-child { grid-column: 1 / -1; }
+body.with-rail button:focus-visible, body.with-rail a:focus-visible { outline: 3px solid #86a5ff; outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  body.with-rail { padding-left: 0; padding-top: 64px; }
+  .app-rail { inset: 0 0 auto; width: 100%; height: 64px; flex-direction: row; align-items: center; padding: 8px 14px; }
+  .rail-brand { flex: 0 0 auto; padding: 0 12px 0 0; }
+  .rail-brand small, .rail-label, .rail-foot { display: none; }
+  .rail-links { display: flex; gap: 2px; overflow-x: auto; min-width: 0; }
+  .rail-links a { min-height: 42px; white-space: nowrap; padding: 7px 9px; }
+  .rail-icon { display: none; }
+  body.with-rail #panel:has(#overview) { grid-template-columns: 1fr; }
+  body.with-rail #panel:has(#overview) > .card:first-child,
+  body.with-rail #panel:has(#overview) > .card:last-child { grid-column: auto; }
+}
+@media (max-width: 570px) {
+  .rail-brand strong { display: none; }
+  .rail-links a { font-size: 12px; }
+}

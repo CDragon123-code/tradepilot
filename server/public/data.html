@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据总览 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / 数据总览</div>
+      <h1>数据资产与同步健康</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>统一数据、统一指标、统一门禁。</h2>
+      <p>员工日常操作在扩展里完成；云端负责数据资产、质量、主数据与接口服务。</p>
+      <div class="login-steps"><span>01 看数据资产</span><span>02 核对质量</span><span>03 供扩展调用</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">使用员工账号或管理员账号进入。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">数据简报</span><p id="briefing-text">正在读取云端数据…</p></div>
+      <span id="quality-badge" class="quality-badge">数据核对中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <div class="focus-grid">
+      <section class="card" aria-labelledby="sources-title">
+        <div class="section-head">
+          <div><span class="eyebrow">数据资产</span><h2 id="sources-title">六类当前态</h2></div>
+          <span class="section-note">当前记录 / 同步时间 / 业务时间</span>
+        </div>
+        <div class="table-scroll">
+          <table id="sources"><thead><tr><th>数据源</th><th>当前记录</th><th>批次</th><th>最后同步</th><th>最新业务时间</th><th>状态</th></tr></thead><tbody></tbody></table>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="gaps-title">
+        <div class="section-head">
+          <div><span class="eyebrow">数据可信度</span><h2 id="gaps-title">优先缺口</h2></div>
+          <a href="/data-quality" class="section-note">查看完整质量页 →</a>
+        </div>
+        <div id="gaps" class="gaps"></div>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="meta-title">
+      <div class="section-head">
+        <div><span class="eyebrow">服务信息</span><h2 id="meta-title">数据版本与新鲜度</h2></div>
+        <span class="section-note">扩展读取云端时使用同一版本</span>
+      </div>
+      <div id="meta" class="meta-grid"></div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/data.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

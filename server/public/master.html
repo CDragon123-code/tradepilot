@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>主数据 · 外贸数据中台</title>
+<link rel="stylesheet" href="/assets/style.css">
+<link rel="stylesheet" href="/assets/shell.css">
+</head>
+<body>
+<main class="workspace">
+  <header class="workspace-head">
+    <div>
+      <div class="eyebrow">数据中台 / 主数据</div>
+      <h1>一个客户，只保留一份档案</h1>
+      <p><span id="seller">店铺 —</span><span class="dot">·</span><span id="updated">等待连接</span></p>
+    </div>
+    <div class="head-actions hidden" id="head-actions">
+      <button id="refresh" class="secondary" type="button">刷新数据</button>
+      <button id="switch-account" class="text-button" type="button">切换账号</button>
+    </div>
+  </header>
+
+  <section id="gate" class="login-layout hidden">
+    <div class="login-intro">
+      <span class="eyebrow">云端数据中台</span>
+      <h2>客户、询盘、聊天，先统一到同一份档案。</h2>
+      <p>云端自动做身份归并；剩余疑似重复由管理员人工确认合并，原始记录不改写，随时可以取消。</p>
+      <div class="login-steps"><span>01 核对重复</span><span>02 确认主档案</span><span>03 扩展按主档案取数</span></div>
+    </div>
+    <div class="card login-card">
+      <h2>登录数据中台</h2>
+      <p class="muted">使用员工账号或管理员账号进入；合并操作仅管理员可执行。</p>
+      <label>员工邮箱<input id="email" type="email" placeholder="name@company.com" autocomplete="username"></label>
+      <label>密码<input id="password" type="password" placeholder="输入密码" autocomplete="current-password"></label>
+      <button id="login" type="button">登录并进入</button>
+      <details class="token-login"><summary>使用只读令牌连接</summary><div class="row"><input id="token" type="password" placeholder="只读令牌" autocomplete="off"><button id="connect" class="secondary" type="button">连接</button></div></details>
+      <p id="gate-msg" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <section id="view" class="hidden">
+    <div class="briefing" aria-live="polite">
+      <div><span class="eyebrow">主数据简报</span><p id="briefing-text">正在读取主数据…</p></div>
+      <span id="master-badge" class="quality-badge">读取中</span>
+    </div>
+
+    <div id="kpis" class="kpis"></div>
+
+    <section class="card" aria-labelledby="groups-title">
+      <div class="section-head">
+        <div><span class="eyebrow">人工确认</span><h2 id="groups-title">重复候选</h2></div>
+        <span id="groups-note" class="section-note">按公司名 / 联系人聚合</span>
+      </div>
+      <div id="groups" class="group-grid"></div>
+    </section>
+
+    <section class="card" aria-labelledby="profiles-title">
+      <div class="section-head">
+        <div><span class="eyebrow">客户档案</span><h2 id="profiles-title">档案列表</h2></div>
+        <button id="export-profiles" class="secondary" type="button">导出当前列表 CSV</button>
+      </div>
+      <div class="asset-toolbar">
+        <div id="filter-tabs" class="tabs"></div>
+        <div class="search-box">
+          <input id="search" type="search" placeholder="搜索名称 / 公司 / 国家 / 别名" autocomplete="off">
+          <button id="search-go" class="secondary" type="button">查询</button>
+        </div>
+      </div>
+      <p id="action-status" class="status-line"></p>
+      <div class="table-scroll">
+        <table id="profiles"><thead><tr><th>档案</th><th>国家</th><th>等级</th><th>负责人</th><th>关联记录</th><th>完整度</th><th>标记</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="merges-title">
+      <div class="section-head">
+        <div><span class="eyebrow">合并台账</span><h2 id="merges-title">已合并档案</h2></div>
+        <span class="section-note">仅记录映射，不修改原始数据</span>
+      </div>
+      <div class="table-scroll">
+        <table id="merges"><thead><tr><th>主档案</th><th>已并入</th><th>备注</th><th>操作人</th><th>时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+      </div>
+    </section>
+  </section>
+</main>
+
+<script src="/assets/data-common.js"></script>
+<script src="/assets/master.js"></script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

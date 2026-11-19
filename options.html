@@ -26,10 +26,16 @@
     .foot { margin: 22px 0 0; color: #8292a7; font-size: 11px; }
     .field { display: block; margin: 0 0 12px; }
     .field span { display: block; margin-bottom: 6px; color: #49617f; font-size: 12px; font-weight: 700; }
-    .field input { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid #dfe7f1; border-radius: 9px; background: #fff; color: #1c2d47; font: 14px "Microsoft YaHei", sans-serif; }
-    .field input:focus-visible { outline: 3px solid #87b6ff; outline-offset: 1px; }
+    .field input, .field textarea { width: 100%; min-height: 40px; padding: 8px 12px; border: 1px solid #dfe7f1; border-radius: 9px; background: #fff; color: #1c2d47; font: 14px "Microsoft YaHei", sans-serif; }
+    .field textarea { min-height: 90px; resize: vertical; }
+    .field input:focus-visible, .field textarea:focus-visible { outline: 3px solid #87b6ff; outline-offset: 1px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
     .check { display: flex; align-items: center; gap: 8px; margin: 14px 0; color: #33465e; font-size: 13px; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    .adv { margin: 16px 0 0; }
+    .adv summary { cursor: pointer; color: #3a6bad; font-size: 12px; font-weight: 700; }
+    .adv[open] summary { margin-bottom: 12px; }
     button.ghost { background: #eef4ff; color: #1858c9; }
     button.ghost:hover { background: #dfeaff; }
     @media (max-width: 560px) { .page { padding-top: 24px; } .card { padding: 22px; } }
@@ -52,17 +58,55 @@
       <div class="brand"><span class="mark" aria-hidden="true">云</span><span><b>云端同步</b><small>数据平台 · 可选设置</small></span></div>
       <span class="eyebrow">后端数据</span>
       <h1>上传到云端数据平台</h1>
-      <p>开启后，每次采集入库的数据会先写入本机队列，再分批上传到你的云端服务。断网或服务不可用时自动重试，数据不会丢。</p>
-      <label class="field"><span>服务地址</span><input id="cloud-base" type="url" placeholder="https://api.example.com"></label>
-      <label class="field"><span>API Token</span><input id="cloud-token" type="password" placeholder="与服务端 API_TOKEN 一致"></label>
-      <label class="field"><span>店铺 ID</span><input id="cloud-seller" type="text" placeholder="seller-main"></label>
-      <label class="check"><input id="cloud-enabled" type="checkbox"><span>启用自动上传</span></label>
-      <div class="actions">
-        <button type="button" id="cloud-save">保存并授权域名</button>
-        <button type="button" id="cloud-backfill" class="ghost">上传现有资料库</button>
-        <button type="button" id="cloud-drain" class="ghost">立即上传队列</button>
+      <p>登录后所有数据以云端为准：采集入库自动增量上传，看板直接读云端，同一套数据库，不再需要手动同步。本机只保留离线缓存。</p>
+      <div id="cloud-login-box">
+        <label class="field"><span>员工邮箱</span><input id="login-email" type="email" autocomplete="username" placeholder="you@company.com"></label>
+        <label class="field"><span>密码</span><input id="login-password" type="password" autocomplete="current-password" placeholder="登录后 30 天内免登录"></label>
+        <div class="actions">
+          <button type="button" id="cloud-login">登录并启用云端</button>
+          <button type="button" id="cloud-logout" class="ghost">退出登录</button>
+          <button type="button" id="open-executor" class="ghost">打开执行台</button>
+          <button type="button" id="open-side" class="ghost">侧边栏工作台</button>
+          <button type="button" id="sync-state" class="ghost">同步登录态到云端</button>
+          <button type="button" id="open-cloud" class="ghost">打开服务地址（信任证书）</button>
+        </div>
+        <p id="cloud-who" class="foot">未登录</p>
+        <p id="collector-state" class="foot">登录态云端托管：检查中…</p>
+        <label class="check"><input id="collector-auto" type="checkbox"><span>登录态自动续期（首次同步后每 12 小时自动更新，避免云端采集因过期中断）</span></label>
       </div>
+      <details class="adv">
+        <summary>手动配置（高级）</summary>
+        <label class="field"><span>服务地址</span><input id="cloud-base" type="url" placeholder="https://api.example.com"></label>
+        <label class="field"><span>访问令牌</span><input id="cloud-token" type="password" placeholder="采集令牌或员工会话令牌"></label>
+        <label class="field"><span>店铺 ID</span><input id="cloud-seller" type="text" placeholder="seller-main"></label>
+        <label class="check"><input id="cloud-enabled" type="checkbox"><span>启用自动上传</span></label>
+        <div class="actions">
+          <button type="button" id="cloud-save" class="ghost">保存手动配置</button>
+          <button type="button" id="cloud-backfill" class="ghost">立即补传（可选）</button>
+          <button type="button" id="cloud-drain" class="ghost">立即上传队列</button>
+        </div>
+      </details>
       <p id="cloud-status" role="status" aria-live="polite">检查中…</p>
+      <p id="cloud-fresh" class="foot"></p>
+      <div class="note" id="cert-note" style="display:none">连不上云端通常是自签名证书未被本机信任：请先运行 <code>release\安装云端证书.cmd</code>，把 <code>caddy-root-ca.crt</code> 安装到当前用户的「受信任的根证书颁发机构」，再回来登录。仅点「继续前往」不足以让扩展的云端请求通过。</div>
+    </div>
+    <div class="card" style="margin-top:18px">
+      <div class="brand"><span class="mark" aria-hidden="true">自</span><span><b>自动发送</b><small>白名单 · 默认关闭</small></span></div>
+      <span class="eyebrow">谨慎启用</span>
+      <h1>白名单客户自动发送</h1>
+      <p>开启后，扩展会从云端执行队列领取已批准的回复，仅在下方白名单内的客户会话中逐条发送。云端同时受每日上限、同客户冷却期与静默时段约束，命中即跳过。</p>
+      <div class="note">建议先用 1–2 个测试客户跑通：确认客户名能正确定位会话、消息能真正发出。未收到页面回执时会标记为「待核实」，不会被当成已发送。</div>
+      <label class="check"><input id="as-enabled" type="checkbox"><span>启用自动发送（仅白名单客户）</span></label>
+      <label class="field"><span>白名单（每行一个：客户名或询盘 ID）</span><textarea id="as-allowlist" rows="4" placeholder="例如：&#10;Ann&#10;inquiry:1234567890"></textarea></label>
+      <div class="grid2">
+        <label class="field"><span>单轮最多发送（条）</span><input id="as-max" type="number" min="1" max="10" value="2"></label>
+        <label class="field"><span>条间隔（秒）</span><input id="as-gap" type="text" value="25-60"></label>
+      </div>
+      <div class="actions">
+        <button type="button" id="as-save">保存自动发送设置</button>
+        <button type="button" id="as-run" class="ghost">立即跑一轮</button>
+      </div>
+      <p id="as-status" role="status" aria-live="polite">检查中…</p>
     </div>
   </div>
   <script src="src/options.js"></script>

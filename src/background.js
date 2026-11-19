@@ -1,5 +1,5 @@
 // MV3 后台：① 下载文件（改名） ② 代理跨域请求（带 cookie） ③ 数据入库 + 打开看板 ④ AI 流式转发
-importScripts('data-core.js', 'db.js', 'identity.js', 'sync-state.js', 'cloud-outbox.js', 'sse.js', 'dify.js'); // 本地归并 / 数据层 / 身份层 / 同步状态 / 云端队列 / SSE / Dify
+importScripts('data-core.js', 'db.js', 'identity.js', 'order-match.js', 'analyze.js', 'ai-key-crypto.js', 'sync-state.js', 'cloud-outbox.js', 'sse.js', 'dify.js', 'autosend.js'); // 本地归并 / 数据层 / 身份层 / 订单归因 / 展会筛选 / AI 密钥加密 / 同步状态 / 云端队列 / SSE / Dify / 白名单自动发送
 
 // 下载策略：
 //   主世界注入：让页面自身创建 blob + <a download> 触发下载；
@@ -45,9 +45,11 @@ chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') });
 });
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html#library') });
+  // 首次安装直接进设置页登录，登录后自动绑定云端与店铺
+  if (details.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
   ensureSyncAlarm();
   ensureAdsAlarm();
+  if (typeof ensureAutosendAlarm === 'function') ensureAutosendAlarm();
 });
 
 // 扩展独立运行：浏览器开启且首次导入完成后，定期启动后台标签页续传。
@@ -103,6 +105,16 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   else if (alarm.name === ADS_ALARM) runAdsDailySync().catch((e) => console.error('投流每日同步失败', e));
   else if (alarm.name === CLOUD_ALARM) {
     if (self.AliCloudOutbox) self.AliCloudOutbox.drain().catch((e) => console.error('云端上传失败', e));
+  } else if (alarm.name === 'aliCloudDrainSoon') {
+    if (self.AliCloudOutbox) self.AliCloudOutbox.drain().catch((e) => console.error('云端续传失败', e));
+  } else if (alarm.name === HEARTBEAT_ALARM) {
+    sendHeartbeat();
+  } else if (alarm.name === AUTOSEND_ALARM) {
+    if (self.AliAutoSend) self.AliAutoSend.runOnce().catch((e) => console.error('自动发送失败', e));
+  } else if (alarm.name === COLLECTOR_SYNC_ALARM) {
+    autoSyncCollector().catch((e) => console.error('登录态自动续期失败', e));
+  } else if (alarm.name === 'aliExtensionUpdateCheck') {
+    checkStagedUpdate().catch(() => {});
   }
 });
 ensureSyncAlarm().catch((e) => console.error('创建定时更新任务失败', e));
@@ -114,6 +126,254 @@ async function ensureCloudAlarm() {
   if (!alarm) await chrome.alarms.create(CLOUD_ALARM, { delayInMinutes: 1, periodInMinutes: 5 });
 }
 ensureCloudAlarm().catch((e) => console.error('创建云端上传任务失败', e));
+
+// 心跳：每 5 分钟向云端报告版本、待传队列与本机条数，用于新鲜度与对账
+const HEARTBEAT_ALARM = 'aliCloudHeartbeat';
+async function ensureHeartbeatAlarm() {
+  const alarm = await chrome.alarms.get(HEARTBEAT_ALARM);
+  if (!alarm) await chrome.alarms.create(HEARTBEAT_ALARM, { delayInMinutes: 1, periodInMinutes: 5 });
+}
+ensureHeartbeatAlarm().catch((e) => console.error('创建心跳任务失败', e));
+
+// ---------------- 云端自动更新 ----------------
+// 本机定时任务从云端下载新版本并覆盖扩展文件夹后，会写入 update-ready.json；
+// 这里轮询该标记，发现新版本且当前没有发送任务时自动重载扩展。
+const UPDATE_ALARM = 'aliExtensionUpdateCheck';
+const UPDATE_READY_FILE = 'update-ready.json';
+const UPDATE_LAST_VERSION_KEY = 'aliLastRunVersion';
+
+function versionParts(v) {
+  return String(v || '').split('.').map((x) => parseInt(x, 10) || 0);
+}
+function isNewerVersion(a, b) {
+  const pa = versionParts(a), pb = versionParts(b);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+}
+async function ensureUpdateAlarm() {
+  const alarm = await chrome.alarms.get(UPDATE_ALARM);
+  if (!alarm) await chrome.alarms.create(UPDATE_ALARM, { delayInMinutes: 2, periodInMinutes: 3 });
+}
+async function readStagedVersion() {
+  // 1) 更新器写入的标记文件（新文件，不会被扩展资源缓存）
+  try {
+    const res = await fetch(chrome.runtime.getURL(UPDATE_READY_FILE) + '?t=' + Date.now(), { cache: 'no-store' });
+    if (res.ok) {
+      const info = await res.json();
+      if (info && info.version) return String(info.version);
+    }
+  } catch (e) { /* 文件还不存在 */ }
+  // 2) 兜底：文件已覆盖后，磁盘上的 manifest.json 版本也会变
+  try {
+    const res = await fetch(chrome.runtime.getURL('manifest.json') + '?t=' + Date.now(), { cache: 'no-store' });
+    if (res.ok) {
+      const m = await res.json();
+      if (m && m.version) return String(m.version);
+    }
+  } catch (e) { /* ignore */ }
+  return '';
+}
+async function checkStagedUpdate() {
+  const staged = await readStagedVersion();
+  if (!staged) return;
+  const cur = chrome.runtime.getManifest().version;
+  if (!isNewerVersion(staged, cur)) return;
+  // 正在批量发送时不打断；等发送结束后的下一轮再重载（发送方最多持有 2 小时）
+  const saved = await chrome.storage.local.get('aliUpdateHold').catch(() => ({}));
+  const holdAt = Number(saved && saved.aliUpdateHold) || 0;
+  if (holdAt && Date.now() - holdAt < 2 * 60 * 60 * 1000) return;
+  console.log('[ali-export-ext] 检测到已下载的新版本', staged, '（当前', cur, '），自动重载扩展');
+  try { chrome.runtime.reload(); } catch (e) { /* 下一轮再试 */ }
+}
+// 页面内提示条：扩展升级后，已打开的阿里页面仍运行旧内容脚本，需要刷新
+function showUpdateBanner(version) {
+  try {
+    if (!document.body || document.getElementById('ali-update-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'ali-update-banner';
+    b.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:2147483647;'
+      + 'background:#111827;color:#fff;padding:9px 12px;border-radius:10px;'
+      + 'font:13px/1.5 "Microsoft YaHei",sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;';
+    const span = document.createElement('span');
+    span.textContent = '外贸助手已更新到 v' + version + '，刷新页面后生效';
+    const btn = document.createElement('button');
+    btn.textContent = '立即刷新';
+    btn.style.cssText = 'border:0;background:#2563eb;color:#fff;border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;';
+    btn.onclick = () => location.reload();
+    const later = document.createElement('button');
+    later.textContent = '稍后';
+    later.style.cssText = 'border:0;background:transparent;color:#9ca3af;cursor:pointer;white-space:nowrap;';
+    later.onclick = () => b.remove();
+    b.appendChild(span); b.appendChild(btn); b.appendChild(later);
+    document.body.appendChild(b);
+  } catch (e) { /* ignore */ }
+}
+// 浏览器里已打开的阿里页面不会自动换成新内容脚本：版本变化时提示刷新
+async function maybeAnnounceUpdate() {
+  const cur = chrome.runtime.getManifest().version;
+  let saved = {};
+  try { saved = await chrome.storage.local.get(UPDATE_LAST_VERSION_KEY); } catch (e) { return; }
+  const last = saved && saved[UPDATE_LAST_VERSION_KEY];
+  try { await chrome.storage.local.set({ [UPDATE_LAST_VERSION_KEY]: cur }); } catch (e) { /* ignore */ }
+  if (!last || last === cur || !isNewerVersion(cur, last)) return;
+  let tabs = [];
+  try { tabs = await chrome.tabs.query({ url: 'https://*.alibaba.com/*' }); } catch (e) { return; }
+  for (const t of tabs) {
+    if (t.id == null) continue;
+    chrome.scripting.executeScript({ target: { tabId: t.id }, func: showUpdateBanner, args: [cur] }).catch(() => {});
+  }
+}
+ensureUpdateAlarm().catch((e) => console.error('创建扩展更新检查任务失败', e));
+checkStagedUpdate().catch(() => {});
+maybeAnnounceUpdate().catch(() => {});
+
+// ---------------- 扩展内「版本更新」按钮 ----------------
+// 扩展不能直接写自己的文件夹，更新动作交给本机更新服务（127.0.0.1:17878）执行。
+const UPDATE_AGENT = 'http://127.0.0.1:17878';
+async function extensionUpdateCheck() {
+  const saved = await chrome.storage.local.get('aliCloudConfig').catch(() => ({}));
+  const cfg = (saved && saved.aliCloudConfig) || {};
+  const list = [cfg.baseUrl, 'https://api.example.com:8443']
+    .filter(Boolean).map((u) => String(u).replace(/\/+$/, ''));
+  const seen = new Set();
+  let latest = '';
+  let base = '';
+  for (const u of list) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    try {
+      const r = await fetch(u + '/extension/version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j && j.version) { latest = String(j.version); base = u; break; }
+    } catch (e) { /* 试下一个入口 */ }
+  }
+  const cur = chrome.runtime.getManifest().version;
+  if (!latest) return { ok: false, error: '连接云端失败，请检查网络或证书' };
+  return { ok: true, current: cur, latest: latest, update: isNewerVersion(latest, cur), baseUrl: base };
+}
+async function extensionUpdateApply() {
+  const saved = await chrome.storage.local.get('aliUpdateHold').catch(() => ({}));
+  const holdAt = Number(saved && saved.aliUpdateHold) || 0;
+  if (holdAt && Date.now() - holdAt < 2 * 60 * 60 * 1000) {
+    return { ok: false, error: '正在发送消息，请等发送结束后再更新' };
+  }
+  try {
+    const r = await fetch(UPDATE_AGENT + '/update', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch (e) {
+    return { ok: false, error: '更新服务未启动：请运行「安装自动更新.cmd」后再试，或联系管理员' };
+  }
+}
+
+async function sendHeartbeat() {
+  try {
+    const cfg = (await chrome.storage.local.get('aliCloudConfig')).aliCloudConfig;
+    if (!cfg || !cfg.enabled || !cfg.baseUrl || !cfg.token) return;
+    const kinds = ['inquiry', 'chat', 'customer', 'public_customer', 'order', 'visitor'];
+    // 与云端口径对齐：按 platform_id 去重后计数（聊天是低置信度哈希，重复行会被云端合并）
+    const counts = {};
+    if (self.AliDB && self.AliDB.localDataset) {
+      const data = await self.AliDB.localDataset(kinds);
+      const outbox = self.AliCloudOutbox;
+      kinds.forEach((k) => {
+        const rows = data[k] || [];
+        counts[k] = outbox && outbox.rowKey ? new Set(rows.map((r) => outbox.rowKey(k, r))).size : rows.length;
+      });
+    }
+    const queue = (await chrome.storage.local.get('aliCloudOutbox')).aliCloudOutbox || [];
+    const queueRows = queue.reduce((s, it) => s + (it.rows ? it.rows.length : 0), 0);
+    const st = (await chrome.storage.local.get('aliCloudSyncStatus')).aliCloudSyncStatus || {};
+    await fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/api/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.token },
+      body: JSON.stringify({
+        client_id: chrome.runtime.id,
+        version: chrome.runtime.getManifest().version,
+        queue_rows: queueRows,
+        counts: counts,
+        last_upload_at: st.at ? new Date(st.at).toISOString() : null,
+      }),
+    });
+  } catch (e) { /* 心跳失败不打扰用户，下一轮再试 */ }
+}
+
+// 白名单自动发送：每 5 分钟看一次队列，是否真的发送由开关与白名单决定
+const AUTOSEND_ALARM = 'aliAutoSend';
+async function ensureAutosendAlarm() {
+  const alarm = await chrome.alarms.get(AUTOSEND_ALARM);
+  if (!alarm) await chrome.alarms.create(AUTOSEND_ALARM, { delayInMinutes: 2, periodInMinutes: 5 });
+}
+ensureAutosendAlarm().catch((e) => console.error('创建自动发送任务失败', e));
+
+// 登录态托管：首次手动同步即视为授权自动续期，之后每 12 小时检查一次
+const COLLECTOR_SYNC_ALARM = 'aliCollectorSyncAuto';
+const COLLECTOR_META_KEY = 'aliCollectorSyncMeta';
+// 阿里登录态特征 cookie：至少命中一个才算有登录痕迹（t 等通用 cookie 不算）
+const LOGIN_COOKIE_NAMES = ['cookie2', '_m_h5_tk', '_m_h5_tk_enc', 'xlly_s', '__cn_logon__'];
+
+async function ensureCollectorSyncAlarm() {
+  const alarm = await chrome.alarms.get(COLLECTOR_SYNC_ALARM);
+  if (!alarm) await chrome.alarms.create(COLLECTOR_SYNC_ALARM, { delayInMinutes: 5, periodInMinutes: 720 });
+}
+ensureCollectorSyncAlarm().catch((e) => console.error('创建登录态续期任务失败', e));
+
+async function syncCollectorCookies(options) {
+  const opts = options || {};
+  const cfg = (await chrome.storage.local.get('aliCloudConfig')).aliCloudConfig;
+  if (!cfg || !cfg.baseUrl || !cfg.token) return { ok: false, error: '还没登录云端' };
+  const prev = (await chrome.storage.local.get(COLLECTOR_META_KEY))[COLLECTOR_META_KEY] || {};
+  const auto = opts.enableAuto === undefined ? prev.auto !== false : !!opts.enableAuto;
+  const cookies = await chrome.cookies.getAll({ domain: '.alibaba.com' });
+  const sign = (cookies || []).filter((c) => LOGIN_COOKIE_NAMES.indexOf(c.name) >= 0 && c.value);
+  if (!sign.length) {
+    const info = Object.assign({}, prev, {
+      at: Date.now(), auto: auto, lastError: '当前浏览器没有有效的阿里登录态（请先登录阿里国际站）',
+    });
+    await chrome.storage.local.set({ [COLLECTOR_META_KEY]: info }).catch(() => {});
+    return { ok: false, error: info.lastError, auto: auto };
+  }
+  // 只比对登录相关 cookie，避免普通 cookie 变化导致无意义上传
+  const fp = self.AliCloudOutbox && self.AliCloudOutbox.hash64
+    ? self.AliCloudOutbox.hash64(sign.map((c) => c.name + '=' + String(c.value).slice(0, 64)).join('\u0001'))
+    : String(sign.length);
+  if (!opts.force && auto && prev.fingerprint === fp) {
+    return { ok: true, skipped: 'unchanged', count: cookies.length, auto: auto };
+  }
+  const res = await fetch(String(cfg.baseUrl).replace(/\/+$/, '') + '/api/collector/cookies', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + cfg.token },
+    body: JSON.stringify({ cookies: cookies }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const info = Object.assign({}, prev, { at: Date.now(), auto: auto, lastError: data.message || ('HTTP ' + res.status) });
+    await chrome.storage.local.set({ [COLLECTOR_META_KEY]: info }).catch(() => {});
+    return { ok: false, error: info.lastError, status: res.status, auto: auto };
+  }
+  const info = {
+    fingerprint: fp, at: Date.now(), count: data.count,
+    auto: auto, lastError: '',
+  };
+  await chrome.storage.local.set({ [COLLECTOR_META_KEY]: info });
+  return { ok: true, count: data.count, auto: auto };
+}
+
+// 自动续期：仅在用户至少手动同步过一次、且没有关闭自动续期时执行
+async function autoSyncCollector() {
+  const meta = (await chrome.storage.local.get(COLLECTOR_META_KEY))[COLLECTOR_META_KEY];
+  if (!meta || !meta.at || meta.auto === false) return;
+  await syncCollectorCookies({ force: false });
+}
 
 // 投流诊断：每天 08:30 检查一次，数据超过 20 小时未更新才自动采集（首次使用前不打扰）
 const ADS_ALARM = 'aliAdsDailySync';
@@ -372,6 +632,25 @@ function cookieNames(cookie) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return;
 
+  // 扩展内「版本更新」：检查云端版本 / 调本地更新服务 / 更新后重载
+  if (msg.type === 'extensionUpdateCheck') {
+    extensionUpdateCheck()
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true;
+  }
+  if (msg.type === 'extensionUpdateApply') {
+    extensionUpdateApply()
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true;
+  }
+  if (msg.type === 'extensionUpdateReload') {
+    sendResponse({ ok: true });
+    setTimeout(() => { try { chrome.runtime.reload(); } catch (e) { /* ignore */ } }, 400);
+    return false;
+  }
+
   // 临时诊断：在页面主世界安装/读取发送请求探针（覆盖所有 frame）
   if (msg.type === 'sendProbeInstall' || msg.type === 'sendProbeRead') {
     (async () => {
@@ -505,6 +784,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // AI 配置安全读写：AES-GCM 密文存 chrome.storage.local，CryptoKey 存扩展源 IndexedDB
+  if (msg.type === 'secureGet' || msg.type === 'secureSet') {
+    const allowed = { aliAiCfg: true, aliDifyCfg: true };
+    const keyName = String(msg.key || '');
+    if (!allowed[keyName]) { sendResponse({ ok: false, error: 'KEY_NOT_ALLOWED' }); return; }
+    (async () => {
+      try {
+        if (msg.type === 'secureSet') {
+          const env = await self.AliSecureStore.encryptJson(msg.value === undefined ? {} : msg.value, keyName);
+          await chrome.storage.local.set({ [keyName]: env });
+          sendResponse({ ok: true, encrypted: true });
+          return;
+        }
+        const stored = await chrome.storage.local.get(keyName);
+        const raw = stored && stored[keyName];
+        if (raw === undefined || raw === null) { sendResponse({ ok: true, value: null }); return; }
+        if (self.AliSecureStore.isEnvelope(raw)) {
+          try {
+            const value = await self.AliSecureStore.decryptJson(raw, keyName);
+            sendResponse({ ok: true, value: value, encrypted: true });
+          } catch (e) {
+            sendResponse({ ok: false, error: 'DECRYPT_FAILED', message: 'AI 配置无法解密；请重新填写 API Key' });
+          }
+          return;
+        }
+        // 旧版明文：首次读取时自动加密迁移
+        try {
+          const env = await self.AliSecureStore.encryptJson(raw, keyName);
+          await chrome.storage.local.set({ [keyName]: env });
+          sendResponse({ ok: true, value: raw, migrated: true });
+        } catch (e) {
+          sendResponse({ ok: false, error: 'ENCRYPT_FAILED', message: String((e && e.message) || e) });
+        }
+      } catch (e) {
+        sendResponse({ ok: false, error: 'SECURE_STORE_FAILED', message: String((e && e.message) || e) });
+      }
+    })();
+    return true;
+  }
+
   // 打开数据看板（扩展内置页，无需任何本地服务）
   if (msg.type === 'openDashboard') {
     const view = msg.view === 'library' ? '#library' : '';
@@ -539,6 +858,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // 白名单自动发送：配置读写、手动跑一轮、读取状态
+  if (msg.type === 'autoSendStatus') {
+    (async () => {
+      try {
+        sendResponse({ ok: true, data: await self.AliAutoSend.status() });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+  if (msg.type === 'autoSendSave') {
+    (async () => {
+      try {
+        const cfg = await self.AliAutoSend.saveConfig(msg.config || {});
+        sendResponse({ ok: true, config: cfg });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+  if (msg.type === 'autoSendNow') {
+    (async () => {
+      try {
+        sendResponse({ ok: true, result: await self.AliAutoSend.runOnce({ force: !!msg.force }) });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+
   // 云端队列：配置、状态、手动上传、首次把现有资料库补传
   if (msg.type === 'cloudStatus') {
     (async () => {
@@ -549,11 +895,50 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // 把当前浏览器的阿里登录态（cookie）托管到云端，供云端采集器使用
+  // force=false 时用于自动续期：登录态没变化就跳过，避免重复上传
+  if (msg.type === 'collectorSync') {
+    (async () => {
+      try {
+        sendResponse(await syncCollectorCookies({ force: true, enableAuto: true }));
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+  if (msg.type === 'collectorStatus') {
+    (async () => {
+      try {
+        const meta = (await chrome.storage.local.get(COLLECTOR_META_KEY))[COLLECTOR_META_KEY] || null;
+        sendResponse({ ok: true, meta: meta });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+  if (msg.type === 'collectorAuto') {
+    (async () => {
+      try {
+        const prev = (await chrome.storage.local.get(COLLECTOR_META_KEY))[COLLECTOR_META_KEY] || {};
+        const meta = Object.assign({}, prev, { auto: !!msg.enabled });
+        await chrome.storage.local.set({ [COLLECTOR_META_KEY]: meta });
+        sendResponse({ ok: true, meta: meta });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
   if (msg.type === 'cloudSave') {
     (async () => {
       try {
+        const before = (await chrome.storage.local.get('aliCloudConfig')).aliCloudConfig || {};
+        const prevSeller = String(before.sellerId || '').trim();
+        const nextSeller = String((msg.config && msg.config.sellerId) || '').trim();
         const cfg = await self.AliCloudOutbox.saveConfig(msg.config);
-        sendResponse({ ok: true, config: cfg });
+        const sellerChanged = Boolean(prevSeller && nextSeller && prevSeller !== nextSeller);
+        if (sellerChanged) {
+          // 切换店铺时清空旧队列并重置登录态指纹，避免主账号数据或旧 cookies 被带到子账号仓库
+          await chrome.storage.local.set({ aliCloudOutbox: [] });
+          await chrome.storage.local.remove(COLLECTOR_META_KEY);
+        }
+        sendResponse({ ok: true, config: cfg, sellerChanged: sellerChanged, previousSeller: prevSeller });
       } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
     })();
     return true;
@@ -571,7 +956,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const kinds = ['inquiry', 'chat', 'customer', 'public_customer', 'order', 'visitor'];
-        const data = await self.AliDB.dataset(kinds);
+        const data = await self.AliDB.localDataset(kinds);
         let items = 0;
         let rows = 0;
         for (const kind of kinds) {
@@ -579,6 +964,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!list.length) continue;
           const r = await self.AliCloudOutbox.enqueue({ kind: kind, name: 'backfill_' + kind, rows: list }, { force: true });
           if (r && r.ok) { items += r.items; rows += list.length; }
+          // 逐类上传：避免全量聊天（2 万+）把队列撑到上限而丢掉其它类型
+          await self.AliCloudOutbox.drain({ force: true });
         }
         const drained = await self.AliCloudOutbox.drain({ force: true });
         sendResponse({ ok: true, items: items, rows: rows, result: drained });
@@ -662,13 +1049,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'inquiryIndex') {
     (async () => {
       try {
-        const rows = await self.AliDB.dataset(['inquiry']);
-        const list = rows.filter((r) => r['询盘ID']).map((r) => ({
-          id: String(r['询盘ID']),
-          names: [r['客户名称'], r['公司名称']].map((v) => String(v === undefined || v === null ? '' : v).trim()).filter(Boolean),
-          t: String(r['创建时间'] || ''),
-        })).sort((a, b) => String(b.t).localeCompare(String(a.t)));
-        sendResponse({ ok: true, list });
+        const data = await self.AliDB.dataset(['inquiry', 'customer', 'public_customer']);
+        const index = self.AliOrderMatch
+          ? self.AliOrderMatch.buildIndex(data)
+          : { inquiries: [], customers: [] };
+        sendResponse({ ok: true, inquiries: index.inquiries, customers: index.customers });
+      } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
+    })();
+    return true;
+  }
+
+  // 展会通知：只读客户/公海/询盘，按国家筛选；不读取、不分析聊天记录
+  if (msg.type === 'expoCustomers') {
+    (async () => {
+      try {
+        const data = await self.AliDB.dataset(['inquiry', 'customer', 'public_customer']);
+        const result = self.AliAnalyze.exhibition(data, String(msg.country || ''), {
+          mineOnly: !!msg.mineOnly,
+          hotOnly: !!msg.hotOnly,
+          contactOnly: !!msg.contactOnly,
+          countriesOnly: !!msg.countriesOnly,
+          limit: 0,
+        });
+        sendResponse({ ok: true, result });
       } catch (e) { sendResponse({ ok: false, error: String((e && e.message) || e) }); }
     })();
     return true;
@@ -790,7 +1193,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (/sample|样品|образец|عينة/i.test(c)) asks.sample++;
           if (/oem|odm|贴牌|private label/i.test(c)) asks.oem++;
           if (/certificate|certification|\biso\b|\bce\b|sfda|认证|сертификат|شهادة/i.test(c)) asks.cert++;
-          (c.match(/[A-Za-z][A-Za-z0-9 \-]{2,24}(product|material|equipment|sheet|sample)/gi) || [])
+          (c.match(/[A-Za-z][A-Za-z0-9 \-]{2,24}(resin|printer|sheet|aligner|denture|resina|смол[аы])/gi) || [])
             .forEach((x) => { const k = x.toLowerCase().trim(); if (k.length > 6) add(terms, k); });
         });
 
