@@ -108,7 +108,7 @@ API Key 只保存在本机 `chrome.storage.local`。
 生成 ZIP 时把扩展文件放在压缩包根目录：
 
 ```powershell
-Compress-Archive -Path manifest.json,dashboard.html,executor.html,options.html,src,assets,README.md,PRIVACY.md -DestinationPath tradepilot-v0.35.25.zip -Force
+Compress-Archive -Path manifest.json,dashboard.html,executor.html,options.html,src,vendor,assets,README.md,PRIVACY.md -DestinationPath tradepilot-v0.35.25.zip -Force
 ```
 
 不要把 `.git`、`docs`、`qrcode.jpg` 或旧的 `.zip` 打进上架包。

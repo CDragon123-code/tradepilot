@@ -108,7 +108,7 @@ See [server/README.md](server/README.md) for deployment and API details.
 Create a ZIP with the extension files at the root:
 
 ```powershell
-Compress-Archive -Path manifest.json,dashboard.html,executor.html,options.html,src,assets,README.md,PRIVACY.md -DestinationPath tradepilot-v0.35.25.zip -Force
+Compress-Archive -Path manifest.json,dashboard.html,executor.html,options.html,src,vendor,assets,README.md,PRIVACY.md -DestinationPath tradepilot-v0.35.25.zip -Force
 ```
 
 Do not include `.git`, `docs`, `qrcode.jpg`, or existing `.zip` files in the store package.
